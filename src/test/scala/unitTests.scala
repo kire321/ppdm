@@ -24,7 +24,7 @@ class PPDMSpec extends FlatSpec {
     val bothFuture = for {
       secure <- Future.traverse(group.nodes)({node => node ? SecureSum(job)}).mapTo[IndexedSeq[Int]]
       direct <- direct.mapTo[Vector[Int]]
-    } yield {println(secure :: direct :: Nil); direct.reduce(_ + _) :: secure.reduce(_ + _) :: Nil}
+    } yield direct.reduce(_ + _) :: secure.reduce(_ + _) :: Nil
     val both = Await.result(bothFuture, 1 second)
     assert(both.head === both.last)
     group.system.shutdown()
@@ -37,7 +37,7 @@ class PPDMSpec extends FlatSpec {
       val partialSums = group.nodes map {node => (node ? msg).mapTo[Int]}
       Future.reduce(partialSums)(_ + _)
     }
-    val sums = Await.result(Future.sequence(futures), 1 second)
+    val sums = Await.result(Future.sequence(futures), 5 second)
     assert(sums.head === sums.last)
     group.system.shutdown()
   }
