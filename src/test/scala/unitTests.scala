@@ -11,16 +11,34 @@ import org.scalatest.FlatSpec
 import Constants._
 
 class PPDMSpec extends FlatSpec {
-  def assertEqual[T](a1:T, a2:T) = {assert(a1 === a2); 0}
+  def Group = new {
+    val system = ActorSystem("ppdm")
+    val nodes = for(i <- 0 until groupSize) yield Node.spawn("node" + i.toString, system)
+    Await.ready(Future.traverse(nodes)({node => node ? SetGroup(nodes.toList)}), 1 second)
+  }
 
   "A group" should "securely compute totals" in {
-    val group = for(i <- 0 until 10) yield Node.spawn("node" + i.toString)
-    val direct = Future.traverse(group)(node => node ? GetSecret)
-    val all = for {
-      groupingFinished <- Future.traverse(group)({node => node ? SetGroup(group)})
-      secure <- Future.traverse(group)({node => node ? SecureSum}).mapTo[IndexedSeq[Int]]
-      direct <- direct.mapTo[List[Int]]
-    } yield direct.reduce(_ + _) :: secure.toList
-    Await.result(all, 1 second) reduce(assertEqual(_, _))
+    val group = Group
+    val direct = Future.traverse(Group.nodes)(node => node ? GetSecret)
+    val job = random.nextInt()
+    val bothFuture = for {
+      secure <- Future.traverse(Group.nodes)({node => node ? SecureSum(job)}).mapTo[IndexedSeq[Int]]
+      direct <- direct.mapTo[Vector[Int]]
+    } yield {println(secure :: direct :: Nil); direct.reduce(_ + _) :: secure.reduce(_ + _) :: Nil}
+    val both = Await.result(bothFuture, 1 second)
+    assert(both.head === both.last)
+    group.system.shutdown()
+  }
+
+  it should "sum in parallel" in {
+    val group = Group
+    val futures = (0 until 2) map {_ =>
+      val msg = SecureSum(random.nextInt())
+      val partialSums = Group.nodes map {node => (node ? msg).mapTo[Int]}
+      Future.reduce(partialSums)(_ + _)
+    }
+    val sums = Await.result(Future.sequence(futures), 1 second)
+    assert(sums.head === sums.last)
+    group.system.shutdown()
   }
 }
