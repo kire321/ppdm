@@ -9,15 +9,9 @@ import scala.concurrent.duration._
 import ExecutionContext.Implicits.global
 import scala.util.Random
 
-object MockRandom {
-  val iter = (0 until 1000).iterator
-  def nextInt() = {1}//(new Random()).nextInt()
-  def nextInt(arg:Int) = {iter.next()}
-}
-
 object Constants {
   implicit val timeout = Timeout(1 second)
-  val random = MockRandom//new Random()
+  val random = new Random()
   val modulus = 100
   val groupSize = 10
 }
@@ -31,7 +25,6 @@ case class Key(key:Int, job:Int)
 
 object Node {
   def apply = {
-
     val secret = random.nextInt(modulus / groupSize)
     new Node(secret, Nil, secret, 0, None)}
   def spawn(name:String, system:ActorSystem) = {system.actorOf(Props(Node.apply), name = name)}
@@ -67,7 +60,6 @@ class Node (
       asker match { //have we already gotten a SecureSum message?
         case Some(ref) =>
           if (nKeys == group.length) {//have we collected all the keys?
-            //println(secret :: sum :: Nil)
             ref ! sum
           }
         case None => Unit

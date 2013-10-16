@@ -19,10 +19,10 @@ class PPDMSpec extends FlatSpec {
 
   "A group" should "securely compute totals" in {
     val group = Group
-    val direct = Future.traverse(Group.nodes)(node => node ? GetSecret)
+    val direct = Future.traverse(group.nodes)(node => node ? GetSecret)
     val job = random.nextInt()
     val bothFuture = for {
-      secure <- Future.traverse(Group.nodes)({node => node ? SecureSum(job)}).mapTo[IndexedSeq[Int]]
+      secure <- Future.traverse(group.nodes)({node => node ? SecureSum(job)}).mapTo[IndexedSeq[Int]]
       direct <- direct.mapTo[Vector[Int]]
     } yield {println(secure :: direct :: Nil); direct.reduce(_ + _) :: secure.reduce(_ + _) :: Nil}
     val both = Await.result(bothFuture, 1 second)
@@ -34,7 +34,7 @@ class PPDMSpec extends FlatSpec {
     val group = Group
     val futures = (0 until 2) map {_ =>
       val msg = SecureSum(random.nextInt())
-      val partialSums = Group.nodes map {node => (node ? msg).mapTo[Int]}
+      val partialSums = group.nodes map {node => (node ? msg).mapTo[Int]}
       Future.reduce(partialSums)(_ + _)
     }
     val sums = Await.result(Future.sequence(futures), 1 second)
