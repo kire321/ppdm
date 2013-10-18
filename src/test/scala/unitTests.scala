@@ -71,7 +71,7 @@ class PPDMSpec extends FlatSpec {
 
 
   it should "form groups" in {
-    val graph = ERgraph(1000, 5)
+    val graph = ERgraph(200, 5)
     Await.ready(graph.nodes.head ? Debug, 1 second)
     Await.ready(graph.nodes.head ? Start, 30 seconds)
     //println(Await.result(Future.traverse(graph.nodes)(_ ? GetGroupID), 1 second).asInstanceOf[Vector[Int]])
