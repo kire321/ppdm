@@ -9,12 +9,14 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util._
 import collection._
+import math.abs
 
 object Constants {
   implicit val timeout = Timeout(10 second)
   val random = new Random()
   val modulus = 100
   val groupSize = 10
+  val gsTolerance = .5
 }
 import Constants._
 
@@ -27,20 +29,20 @@ case class Debug()
 case class GetDegree()
 case class AddNeighbor(neighbor:ActorRef)
 case class StartYourOwnGroup(stableRef:ActorRef)
-case class JoinMe(group:mutable.Set[ActorRef], groupID:Int, stableRef:ActorRef)
+case class JoinMe(group:mutable.Set[ActorRef], stableRef:ActorRef)
 case class GetGroup()
-case class Gossip(group:mutable.Set[ActorRef], groupID:Int, debug:Boolean)
-case class GroupingIsDone()
+case class Gossip(group:mutable.Set[ActorRef], debug:Boolean)
+case class GroupingFinishedMsg()
 case class Start()
-case class GetGroupID()
 case class Invite()
+case class GetNeighbors()
 
 object Node {
   def apply = {
     //In reality, we should be choosing moduli based on secrets and not the other way around
     val secret = random.nextInt(modulus / (groupSize * 2))
     val jobs = new mutable.HashMap[Int, TempDataForSumming]
-    new Node(secret, mutable.HashSet[ActorRef](), None, jobs, false, mutable.HashSet[ActorRef](), None, 0, false, mutable.HashSet[ActorRef]())
+    new Node(secret, mutable.HashSet[ActorRef](), jobs, false, mutable.HashSet[ActorRef](), None, 0, false, mutable.HashSet[ActorRef]())
   }
   def spawn(name:String, system:ActorSystem) = {system.actorOf(Props(Node.apply), name = name)}
 }
@@ -50,7 +52,6 @@ case class TempDataForSumming(var sum:Int, var nKeys:Int, var asker:Option[Actor
 case class Node (
              val secret:Int,
              var group:mutable.Set[ActorRef],
-             var groupID:Option[Int],
              var jobs:mutable.Map[Int, TempDataForSumming],
              var debug:Boolean,
              var neighbors:mutable.Set[ActorRef],
@@ -66,44 +67,63 @@ case class Node (
       jobs map {x => "\t" + x._1.toString + "   " + x._2.toString + "\n"} reduce {_ + _}
   }
 
-  def groupingFinished = {
+  def groupingFinishedMethod = {
     if (unfinishedChildren == 0)
       parent match {
         case Some(pRef) =>
-          if (debug)
-            println("Reporting done")
-          pRef ! GroupingIsDone
+          if (neighbors.size == 0)
+            println("I'm lonely in groupingFinishedMethod")
+          if (group.size + 1 < groupSize * gsTolerance) {
+            for {
+              neighborGroups <- Future.traverse(neighbors)(_ ? GetGroup).mapTo[mutable.Set[mutable.Set[ActorRef]]]
+              otherGroup = neighborGroups reduce {(left, right)  =>
+                if (abs(left.size - groupSize) < abs(right.size - groupSize))
+                  left
+                else
+                  right
+              }
+              merged = group ++= otherGroup
+              gossipingDone <- Future.traverse(group)(_ ? Gossip(group + self, debug))
+            } yield pRef ! GroupingFinishedMsg
+          } else {
+            if (debug)
+              println("Reporting done")
+            pRef ! GroupingFinishedMsg
+          }
         case None => println("GroupingFinished: parent is None")
       }
     else
       finishedHere = true
   }
 
+
   def inviteLater = context.system.scheduler.scheduleOnce(100 milliseconds, self, Invite)
 
   def receive = {
+    case GetNeighbors =>
+      if (debug)
+        println("Get neighbors")
+      if (neighbors.size == 0)
+        println("I'm lonely in getNeighbors")
+      sender ! neighbors
     case Invite =>
       if (debug)
         println("inviteFrom was called")
       if (group.size < groupSize) {
         if (debug)
           println("Inviting")
-        groupID match {
-          case Some(groupIDInt) =>
-            outsiders headOption match {
-              case Some(outsider) => outsider ? JoinMe(group + self, groupIDInt, self) onComplete {
-                case Success(_) =>
-                  group add outsider
-                  outsiders remove outsider
-                  unfinishedChildren += 1
-                  inviteLater
-                case Failure(_) =>
-                  outsiders remove outsider
-                  self ! Invite
-              }
-              case None => groupingFinished
-            }
-          case None => println("InviteFrom: no group id")
+        outsiders headOption match {
+          case Some(outsider) => outsider ? JoinMe(group + self, self) onComplete {
+            case Success(_) =>
+              group add outsider
+              outsiders remove outsider
+              unfinishedChildren += 1
+              inviteLater
+            case Failure(_) =>
+              outsiders remove outsider
+              self ! Invite
+          }
+          case None => groupingFinishedMethod
         }
       } else {
         if (debug)
@@ -114,42 +134,43 @@ case class Node (
               unfinishedChildren +=1
             case Failure(_) => Unit
           }
-        }) onComplete {case _ => groupingFinished}
+        }) onComplete {case _ => groupingFinishedMethod}
       }
-    case GetGroupID =>
-      sender ! (groupID, self)
     case Start =>
       if (debug)
         println("Start")
       self ! StartYourOwnGroup(sender)
     case Finished =>
-      if (debug)
+      if (false)
         println("Finished")
     case GetGroup =>
       if (debug)
         println("GetGroup")
       sender ! group + self
-    case GroupingIsDone =>
+    case GroupingFinishedMsg =>
       if (debug)
         println("GroupingIsDone")
       unfinishedChildren -= 1
       if (finishedHere)
-        groupingFinished
+        groupingFinishedMethod
     case StartYourOwnGroup(stableRef) =>
-        if (debug)
+      if (neighbors.size == 0)
+        println("I'm lonely in StartYourOwnGroup")
+      if (debug)
           println("StartYourOwnGroup")
         parent match {
           case Some(_) => sender ! Status.Failure(new Exception)
           case None => {
             parent = Some(stableRef)
-            groupID = Some(random.nextInt())
             sender ! Finished
-            outsiders = neighbors
+            outsiders = mutable.HashSet[ActorRef](neighbors.toSeq: _*)
             self ! Invite
           }
 
         }
-    case JoinMe(newGroup, newGroupID, stableRef) =>
+    case JoinMe(newGroup, stableRef) =>
+      if (neighbors.size == 0)
+        println("I'm lonely in JoinMe")
       if (debug)
         println("JoinMe")
       parent match {
@@ -157,38 +178,27 @@ case class Node (
         case None => {
           parent = Some(stableRef)
           group = newGroup
-          groupID = Some(newGroupID)
           sender ! Finished
           for (member <- group)
-            member ! Gossip(group + self, newGroupID, debug)
+            member ! Gossip(group + self, debug)
           outsiders = neighbors - stableRef
           inviteLater
         }
       }
-    case Gossip(similarGroup, otherGroupID, otherDebug) =>
+    case Gossip(similarGroup, otherDebug) =>
       if (false)
         println("Gossip " + group.size.toString)// + "\n" + similarGroup.toString + "\n" + (group + self).toString)
-      groupID match {
-        case Some(groupIDInt) =>
-          if (groupIDInt == otherGroupID) {
-            if (!(similarGroup subsetOf group + self)) {
-              group ++= similarGroup - self
-              if (debug)
-                println("Gossiping " + group.size.toString)//self.toString + "\n" + group.size.toString + "\n" + similarGroup.toString + "\n" + (group + self).toString)
-              for (member <- group)
-                member ! Gossip(group + self, groupIDInt, debug)
-            } else {
-              if (false)
-                println("Not gossiping")
-            }
-          } else {
-             if (debug)
-              println("Gossip: wrong group ID")
-          }
-        case None =>
-          println("Gossip: no group ID")
+      if (!(similarGroup subsetOf group + self)) {
+        group ++= similarGroup - self
+        if (debug)
+          println("Gossiping " + group.size.toString)//self.toString + "\n" + group.size.toString + "\n" + similarGroup.toString + "\n" + (group + self).toString)
+        for (member <- group)
+          member ! Gossip(group + self, debug)
+      } else {
+        if (false)
+          println("Not gossiping")
       }
-
+      sender ! Finished
     case GetDegree =>
       if (debug)
         println("GetDegree")
