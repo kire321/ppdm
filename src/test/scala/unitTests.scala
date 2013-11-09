@@ -15,7 +15,7 @@ class PPDMSpec extends FlatSpec {
   def Group = new {
     val system = ActorSystem("ppdm")
     val nodes = for(i <- 0 until groupSize) yield Node.spawn("node" + i.toString, system)
-    Await.ready(Future.traverse(nodes)({node => node ? SetGroup(mutable.Set(nodes.toSeq: _*))}), 1 second)
+    Await.result(Future.traverse(nodes)({node => node ? SetGroup(mutable.HashSet(nodes.toSeq: _*))}), 1 second)
   }
 
   "A group" should "securely compute totals" in {
@@ -50,7 +50,7 @@ class PPDMSpec extends FlatSpec {
     val repeatedNodes = List.fill(degree / 2)(List(nodes.toSeq: _*)).flatten
     val pairs = repeatedNodes zip random.shuffle(repeatedNodes) filter (pair => pair._1 != pair._2)
     def doubleLink(pair:(ActorRef, ActorRef)) = {Future.sequence((pair._1 ? AddNeighbor(pair._2)) :: (pair._2 ? AddNeighbor(pair._1)) :: Nil)}
-    Await.ready(Future.traverse(pairs)(doubleLink), 1 second)
+    Await.result(Future.traverse(pairs)(doubleLink), 1 second)
   }
 
   "A Fixed-Degree Random Graph" should "have the size and degree we asked for" in {
@@ -60,7 +60,7 @@ class PPDMSpec extends FlatSpec {
     val graph = FixedDegreeRandomGraph(size, degree)
     assert(graph.nodes.length == size)
     val neighborSets = Await.result(Future.traverse(graph.nodes)(_ ? GetNeighbors), 1 second).asInstanceOf[Vector[Set[ActorRef]]]
-    println(neighborSets map (_.size))
+    //println(neighborSets map (_.size))
     //TODO: how is it possible that we sometimes get degree 3 nodes?
     assert(neighborSets.count(_.size == degree) > tolerance * size)
     graph.system.shutdown()
@@ -68,11 +68,10 @@ class PPDMSpec extends FlatSpec {
 
   it should "form groups" in {
     val graph = FixedDegreeRandomGraph(500, 6)
-    Await.ready(graph.nodes.head ? Debug, 1 second)
-    Await.ready(graph.nodes.head ? Start, 30 seconds)
+    Await.result(graph.nodes.head ? Start, 5 seconds)
     val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup), 5 seconds)
     val groups = redundantGroups.asInstanceOf[Vector[mutable.Set[ActorRef]]].distinct
-    println(groups map {_ size})
+    //println(groups map {_ size})
     val nodesFromGroups = groups flatMap {elem => elem}
     val distinctNodes = nodesFromGroups.distinct
     assert(distinctNodes.length == nodesFromGroups.length, "Nodes are in at most one group")
@@ -84,6 +83,44 @@ class PPDMSpec extends FlatSpec {
         println("Length " + length.toString + " will fail test")
       assert(willPass, "Group is the correct size.")
     }
+    graph.system.shutdown()
+  }
+
+  it should "sum securely" in {
+    val graph = FixedDegreeRandomGraph(75, 6)
+    val finished = for {
+      grouping <- graph.nodes.head ? Start
+      secureMap <- (graph.nodes.head ? TreeSum).mapTo[ActorMap]
+      pairs <- Future.traverse(secureMap.keys){actors =>
+        val job = random.nextInt()
+        for {
+          insecureSum <- Future.reduce(actors map {node => (node ? SecureSum(job)).mapTo[Int]})(_ + _)
+        } yield {
+          println(insecureSum)
+          (actors, insecureSum)
+        }
+      }
+      insecureMap = immutable.Map[ActorSet, Int](pairs.toList:_*)
+      printed = {
+        println(secureMap)
+        println(insecureMap)
+        /*graph.nodes foreach {actor =>
+          for {
+            secret <- (actor ? GetSecret).mapTo[Int]
+          } yield println(actor.toString + " " + secret.toString)
+        } */
+      }
+      secureSum = secureMap.values.fold(0)(_ + _)
+      insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret).mapTo[Int]})(_ + _)
+      insecureChecked = assert(insecureSum === insecureMap.values.fold(0)(_ + _), "Insecure sums should match")
+      groupsChecked = secureMap.keys foreach {actors =>
+        val secureSum = secureMap(actors)
+        val insecureSum = insecureMap(actors)
+        //println(secureSum.toString + " " + insecureSum.toString)
+        assert(secureSum === insecureSum, "Group by group, secure and insecure sums should be equal")
+      }
+    } yield assert(secureSum === insecureSum, "Secure and insecure sums should be equal")
+    Await.result(finished, 5 seconds)
     graph.system.shutdown()
   }
 }

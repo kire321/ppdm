@@ -17,49 +17,49 @@ object Constants {
   val modulus = 100
   val groupSize = 10
   val gsTolerance = .5
+  type ActorSet = immutable.Set[ActorRef]
+  type ActorMap = immutable.Map[ActorSet, Int]
 }
 import Constants._
 
-case class Finished()
-case class SetGroup(group:mutable.Set[ActorRef])
-case class GetSecret()
-case class SecureSum(job:Int)
-case class Key(key:Int, job:Int)
-case class Debug()
-case class GetDegree()
-case class AddNeighbor(neighbor:ActorRef)
-case class StartYourOwnGroup(stableRef:ActorRef)
-case class JoinMe(group:mutable.Set[ActorRef], stableRef:ActorRef)
-case class GetGroup()
-case class Gossip(group:mutable.Set[ActorRef], debug:Boolean)
-case class GroupingFinishedMsg()
-case class Start()
-case class Invite()
-case class GetNeighbors()
+sealed abstract class NodeMsg()
+
+case class Finished() extends NodeMsg
+case class SetGroup(group:mutable.HashSet[ActorRef]) extends NodeMsg
+case class GetSecret() extends NodeMsg
+case class SecureSum(job:Int) extends NodeMsg
+case class Key(key:Int, job:Int) extends NodeMsg
+case class Debug() extends NodeMsg
+case class GetDegree() extends NodeMsg
+case class AddNeighbor(neighbor:ActorRef) extends NodeMsg
+case class StartYourOwnGroup(stableRef:ActorRef) extends NodeMsg
+case class JoinMe(group:mutable.HashSet[ActorRef], stableRef:ActorRef) extends NodeMsg
+case class GetGroup() extends NodeMsg
+case class Gossip(group:mutable.HashSet[ActorRef], debug:Boolean) extends NodeMsg
+case class GroupingFinishedMsg() extends NodeMsg
+case class Start() extends NodeMsg
+case class Invite() extends NodeMsg
+case class GetNeighbors() extends NodeMsg
+case class TreeSum() extends NodeMsg
 
 object Node {
-  def apply = {
-    //In reality, we should be choosing moduli based on secrets and not the other way around
-    val secret = random.nextInt(modulus / (groupSize * 2))
-    val jobs = new mutable.HashMap[Int, TempDataForSumming]
-    new Node(secret, mutable.HashSet[ActorRef](), jobs, false, mutable.HashSet[ActorRef](), None, 0, false, mutable.HashSet[ActorRef]())
-  }
-  def spawn(name:String, system:ActorSystem) = {system.actorOf(Props(Node.apply), name = name)}
+  def spawn(name:String, system:ActorSystem) = {system.actorOf(Props(new Node), name = name)}
 }
 
 case class TempDataForSumming(var sum:Int, var nKeys:Int, var asker:Option[ActorRef])
 
-case class Node (
-             val secret:Int,
-             var group:mutable.Set[ActorRef],
-             var jobs:mutable.Map[Int, TempDataForSumming],
-             var debug:Boolean,
-             var neighbors:mutable.Set[ActorRef],
-             var parent:Option[ActorRef],
-             var unfinishedChildren:Int,
-             var finishedHere:Boolean,
-             var outsiders:mutable.Set[ActorRef]
-             ) extends Actor {
+class Node extends Actor {
+  val secret = random.nextInt(modulus / (groupSize * 2))
+  var group = mutable.HashSet[ActorRef]()
+  var jobs = new mutable.HashMap[Int, TempDataForSumming]
+  var debug = false
+  var neighbors = mutable.HashSet[ActorRef]()
+  var parent:Option[ActorRef] = None
+  var unfinishedChildren = 0
+  var finishedHere = false
+  var outsiders = mutable.HashSet[ActorRef]()
+  var children = mutable.HashSet[ActorRef]()
+
   def jobsString = {
     if (jobs isEmpty)
       "Jobs is empty"
@@ -99,13 +99,33 @@ case class Node (
 
   def inviteLater = context.system.scheduler.scheduleOnce(100 milliseconds, self, Invite)
 
-  def receive = {
+  def receive: PartialFunction[Any, Unit] = {
+    case TreeSum =>
+      val senderCopy = sender
+      if (debug)
+        println("Tree sum")
+      parent match {
+        case Some(pRef) => {
+          val job = Random.nextInt()
+          val groupSum = Future.fold((group + self) map {node => (node ? SecureSum(job)).mapTo[Int]})(0)(_ + _)
+          val treeSum = for {
+            childrenTable <- Future.fold(children map {node => (node ? TreeSum).mapTo[ActorMap]})(immutable.HashMap[ActorSet, Int]():ActorMap)((_ ++ _))
+            groupSum <- groupSum
+            groupTable = immutable.HashMap(((immutable.HashSet(group.toSeq:_*) + self), groupSum))
+          } yield senderCopy ! ((childrenTable ++ groupTable))
+          treeSum onFailure {case e: Throwable => throw e}
+        }
+        case None =>
+          sender ! Status.Failure(new Exception("Parent is none. Did you TreeSum before forming groups?"))
+      }
+
     case GetNeighbors =>
       if (debug)
         println("Get neighbors")
       if (neighbors.size == 0)
         println("I'm lonely in getNeighbors")
       sender ! neighbors
+
     case Invite =>
       if (debug)
         println("inviteFrom was called")
@@ -118,6 +138,7 @@ case class Node (
               group add outsider
               outsiders remove outsider
               unfinishedChildren += 1
+              children add outsider
               inviteLater
             case Failure(_) =>
               outsiders remove outsider
@@ -132,10 +153,12 @@ case class Node (
           outsider ? StartYourOwnGroup(self) andThen {
             case Success(_) =>
               unfinishedChildren +=1
+              children add outsider
             case Failure(_) => Unit
           }
         }) onComplete {case _ => groupingFinishedMethod}
       }
+
     case Start =>
       if (debug)
         println("Start")
@@ -222,10 +245,12 @@ case class Node (
       group = newGroup.filter(_ != self)
       sender ! Finished
     case SecureSum(job) =>
+      if (debug)
+        println("SecureSum")
       //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
       if (!(jobs contains job))
         jobs(job) = TempDataForSumming(0, 0, None)
-      if(debug)
+      if(false)
         println("SecureSumBefore\n" + jobsString)
       jobs(job).sum += secret
       group foreach {peer:ActorRef =>
@@ -238,15 +263,15 @@ case class Node (
       if (jobs(job).nKeys == group.size) {
         sender ! jobs(job).sum
         if (debug)
-          println("SecureSum Finished\n" + jobsString)
+          println("SecureSum Finished")
       }
-      if(debug)
+      if(false)
         println("SecureSumAfter\n" + jobsString)
     case Key(key, job) =>
       //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
       if (!(jobs contains job))
         jobs(job) = TempDataForSumming(0, 0, None)
-      if (debug)
+      if (false)
         println("KeyBefore\n" + jobsString)
       jobs(job).sum += key
       jobs(job).nKeys += 1
@@ -255,12 +280,13 @@ case class Node (
           if (jobs(job).nKeys == group.size) {//have we collected all the keys?
             ref ! jobs(job).sum
             if (debug)
-              println("Key Finished\n" + jobsString)
+              println("Key Finished")
           }
         case None => Unit
       }
-      if (debug)
+      if (false)
         println("Key After\n" + jobsString)
+
     case anything =>
       sender ! Status.Failure(new Exception("Unknown message: " + anything.toString))
   }
