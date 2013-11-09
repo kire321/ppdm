@@ -43,10 +43,14 @@ class PPDMSpec extends FlatSpec {
     group.system.shutdown()
   }
 
-  def FixedDegreeRandomGraph(size:Int, degree:Int) = new {
+  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factory = Node.spawn _) = new {
     require(degree.toFloat / 2 == degree / 2 , "The degree must be even")
     val system = ActorSystem("ppdm")
-    val nodes = for(i <- 0 until size) yield Node.spawn("node" + i.toString, system)
+    val nodes = for(i <- 0 until size) yield factory("node" + i.toString, system)
+    if (size == 10) {
+      println("Enabling debug")
+      Await.result(nodes.head ? Debug, 1 second)
+    }
     val repeatedNodes = List.fill(degree / 2)(List(nodes.toSeq: _*)).flatten
     val pairs = repeatedNodes zip random.shuffle(repeatedNodes) filter (pair => pair._1 != pair._2)
     def doubleLink(pair:(ActorRef, ActorRef)) = {Future.sequence((pair._1 ? AddNeighbor(pair._2)) :: (pair._2 ? AddNeighbor(pair._1)) :: Nil)}
@@ -86,14 +90,14 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  it should "sum securely" in {
-    val graph = FixedDegreeRandomGraph(500, 6)
+  def testSecureSumming(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _) = {
+    val graph = FixedDegreeRandomGraph(size, degree, factory)
     val finished = for {
       grouping <- graph.nodes.head ? Start
       secureMap <- (graph.nodes.head ? TreeSum).mapTo[ActorMap]
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>
-          sums.groupBy(x => x).maxBy((pair:(Int, List[Int])) => pair._2.length)._1
+        sums.groupBy(x => x).maxBy((pair:(Int, List[Int])) => pair._2.length)._1
       }
       secureSum = secureGroupSums.fold(0)(_ + _)
       insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret).mapTo[Int]})(_ + _)
@@ -101,5 +105,28 @@ class PPDMSpec extends FlatSpec {
     Await.result(finished, 5 seconds)
     graph.system.shutdown()
   }
+
+  it should "sum securely" in testSecureSumming()
+
+  def passThrough(name:String, system:ActorSystem) = {
+    system.actorOf(Props(new FallableNode({() => 0}, 0)), name = name)
+  }
+
+  "Pass-through fallableNodes" should "do nothing" in testSecureSumming(size = 10, factory = passThrough _)
+
+  def powerLaw(start:Double, stop:Double, exponent:Double):(() => Double) = {
+    def innerFunc:Double = {
+      Math.pow(((Math.pow(stop, (exponent+1)) - Math.pow(start, (exponent+1)))*random.nextFloat() + Math.pow(start, (exponent+1))), (1/(exponent+1)))
+    }
+    innerFunc _
+  }
+
+  def typicalLatency = powerLaw(100, 1000, -1.5)().toInt
+
+  def latentNodes(name:String, system:ActorSystem) = {
+    system.actorOf(Props(new FallableNode(typicalLatency _, 0)), name = name)
+  }
+
+  //"Latent nodes" should "do nothing" in testSecureSumming(factory = latentNodes _)
 }
 

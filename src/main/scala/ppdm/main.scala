@@ -20,6 +20,7 @@ object Constants {
   type ActorSet = immutable.Set[ActorRef]
   type ActorMap = immutable.Map[ActorSet, List[Int]]
   def shortGroup(group:ActorSet) = (group map (_.path.name)).fold("")(_ + _)
+  type Factory = (String, ActorSystem) => ActorRef
 }
 import Constants._
 
@@ -44,7 +45,9 @@ case class GetNeighbors() extends NodeMsg
 case class TreeSum() extends NodeMsg
 
 object Node {
-  def spawn(name:String, system:ActorSystem) = {system.actorOf(Props(new Node), name = name)}
+  def spawn(name:String, system:ActorSystem) = {
+    system.actorOf(Props(new Node), name = name)
+  }
 }
 
 case class TempDataForSumming(var sum:Int, var nKeys:Int, var asker:Option[ActorRef])
@@ -172,6 +175,7 @@ class Node extends Actor {
       if (debug)
         println("Start")
       self ! StartYourOwnGroup(sender)
+
     case Finished =>
       if (false)
         println("Finished")
@@ -236,6 +240,7 @@ class Node extends Actor {
       if (debug)
         println("GetDegree")
       sender ! neighbors.size
+
     case AddNeighbor(neighbor) =>
       neighbors add neighbor
       if (debug)
