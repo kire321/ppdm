@@ -12,7 +12,7 @@ import collection._
 import math.abs
 
 object Constants {
-  implicit val timeout = Timeout(10 second)
+  implicit val timeout = Timeout(10 seconds)
   val random = new Random()
   val modulus = 100
   val groupSize = 10

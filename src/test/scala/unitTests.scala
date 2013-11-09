@@ -43,18 +43,17 @@ class PPDMSpec extends FlatSpec {
     group.system.shutdown()
   }
 
-  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factory = Node.spawn _) = new {
+  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factory = Node.spawn _, debug:Boolean = false) = new {
     require(degree.toFloat / 2 == degree / 2 , "The degree must be even")
     val system = ActorSystem("ppdm")
     val nodes = for(i <- 0 until size) yield factory("node" + i.toString, system)
-    if (size == 10) {
-      println("Enabling debug")
+    if (debug) {
       Await.result(nodes.head ? Debug, 1 second)
     }
     val repeatedNodes = List.fill(degree / 2)(List(nodes.toSeq: _*)).flatten
     val pairs = repeatedNodes zip random.shuffle(repeatedNodes) filter (pair => pair._1 != pair._2)
     def doubleLink(pair:(ActorRef, ActorRef)) = {Future.sequence((pair._1 ? AddNeighbor(pair._2)) :: (pair._2 ? AddNeighbor(pair._1)) :: Nil)}
-    Await.result(Future.traverse(pairs)(doubleLink), 1 second)
+    Await.result(Future.traverse(pairs)(doubleLink), 10 seconds)
   }
 
   "A Fixed-Degree Random Graph" should "have the size and degree we asked for" in {
@@ -90,10 +89,10 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  def testSecureSumming(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _) = {
-    val graph = FixedDegreeRandomGraph(size, degree, factory)
+  def testSecureSumming(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _, debug:Boolean = false) = {
+    val graph = FixedDegreeRandomGraph(size, degree, factory, debug)
     val finished = for {
-      grouping <- graph.nodes.head ? Start
+      grouping <- graph.nodes.head.ask(Start)(30 seconds)
       secureMap <- (graph.nodes.head ? TreeSum).mapTo[ActorMap]
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>
@@ -102,7 +101,7 @@ class PPDMSpec extends FlatSpec {
       secureSum = secureGroupSums.fold(0)(_ + _)
       insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret).mapTo[Int]})(_ + _)
     } yield assert(secureSum === insecureSum, "Secure and insecure sums should be equal")
-    Await.result(finished, 5 seconds)
+    Await.result(finished, 1 minute)
     graph.system.shutdown()
   }
 
@@ -112,7 +111,7 @@ class PPDMSpec extends FlatSpec {
     system.actorOf(Props(new FallableNode({() => 0}, 0)), name = name)
   }
 
-  "Pass-through fallableNodes" should "do nothing" in testSecureSumming(size = 10, factory = passThrough _)
+  "Pass-through fallableNodes" should "do nothing" in testSecureSumming(size = 100, factory = passThrough _)
 
   def powerLaw(start:Double, stop:Double, exponent:Double):(() => Double) = {
     def innerFunc:Double = {
@@ -127,6 +126,6 @@ class PPDMSpec extends FlatSpec {
     system.actorOf(Props(new FallableNode(typicalLatency _, 0)), name = name)
   }
 
-  //"Latent nodes" should "do nothing" in testSecureSumming(factory = latentNodes _)
+  "Latent nodes" should "do nothing" in testSecureSumming(size = 2500, factory = latentNodes _, debug = true)
 }
 
