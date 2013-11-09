@@ -18,7 +18,8 @@ object Constants {
   val groupSize = 10
   val gsTolerance = .5
   type ActorSet = immutable.Set[ActorRef]
-  type ActorMap = immutable.Map[ActorSet, Int]
+  type ActorMap = immutable.Map[ActorSet, List[Int]]
+  def shortGroup(group:ActorSet) = (group map (_.path.name)).fold("")(_ + _)
 }
 import Constants._
 
@@ -99,6 +100,12 @@ class Node extends Actor {
 
   def inviteLater = context.system.scheduler.scheduleOnce(100 milliseconds, self, Invite)
 
+  def merge(left:ActorMap, right:ActorMap) = {
+    immutable.HashMap(((left.keySet ++ right.keySet) map {key =>
+      (key, left.getOrElse(key, Nil) ::: right.getOrElse(key, Nil))
+    }).toList:_*)
+  }
+
   def receive: PartialFunction[Any, Unit] = {
     case TreeSum =>
       val senderCopy = sender
@@ -107,12 +114,14 @@ class Node extends Actor {
       parent match {
         case Some(pRef) => {
           val job = Random.nextInt()
-          val groupSum = Future.fold((group + self) map {node => (node ? SecureSum(job)).mapTo[Int]})(0)(_ + _)
+          val immutableGroup = immutable.HashSet(group.toSeq:_*) + self
+          val groupSum = Future.fold(immutableGroup map {node => (node ? SecureSum(job)).mapTo[Int]})(0)(_ + _)
+          val childrenSums = children map {node => (node ? TreeSum).mapTo[ActorMap]}
           val treeSum = for {
-            childrenTable <- Future.fold(children map {node => (node ? TreeSum).mapTo[ActorMap]})(immutable.HashMap[ActorSet, Int]():ActorMap)((_ ++ _))
+            childrenTable <- Future.fold(childrenSums)(immutable.HashMap[ActorSet, List[Int]]():ActorMap)(merge(_,_))
             groupSum <- groupSum
-            groupTable = immutable.HashMap(((immutable.HashSet(group.toSeq:_*) + self), groupSum))
-          } yield senderCopy ! ((childrenTable ++ groupTable))
+            groupTable = immutable.HashMap((immutableGroup, List(groupSum))):ActorMap
+          } yield senderCopy ! merge(childrenTable, groupTable)
           treeSum onFailure {case e: Throwable => throw e}
         }
         case None =>
@@ -208,6 +217,7 @@ class Node extends Actor {
           inviteLater
         }
       }
+
     case Gossip(similarGroup, otherDebug) =>
       if (false)
         println("Gossip " + group.size.toString)// + "\n" + similarGroup.toString + "\n" + (group + self).toString)
@@ -265,8 +275,7 @@ class Node extends Actor {
         if (debug)
           println("SecureSum Finished")
       }
-      if(false)
-        println("SecureSumAfter\n" + jobsString)
+
     case Key(key, job) =>
       //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
       if (!(jobs contains job))
