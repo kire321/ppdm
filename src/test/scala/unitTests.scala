@@ -18,9 +18,67 @@ class PPDMSpec extends FlatSpec {
     Await.result(Future.traverse(nodes)({node => node ? SetGroup(mutable.HashSet(nodes.toSeq: _*))}), 1 second)
   }
 
+  "SafeFuture.sequence" should "sequence futures" in {
+    val result = Await.result(SafeFuture.sequence(Future.successful(0) :: Future.successful(0) :: Nil), 1 second)
+    assert(result === List(0, 0))
+  }
+
+  it should "work for weird types" in {
+    val set = mutable.HashSet(Future.successful(0), Future.successful(1), Future.successful(2))
+    val result = Await.result(SafeFuture.sequence(set), 1 second)
+    assert(result === mutable.HashSet(0, 1, 2))
+  }
+
+  it should "drop timeouts" in {
+    val group = Group
+    val futures = (group.nodes.head ? Key(0, 0)) :: Future.successful(0) :: Nil
+    val result = Await.result(SafeFuture.sequence(futures), 2 seconds)
+    assert(result.asInstanceOf[List[Int]] === List(0))
+    group.system.shutdown()
+  }
+
+  it should "fail for all exceptions other than timeouts" in {
+    val group = Group
+    intercept[Exception] {
+      Await.result(SafeFuture.sequence((group.nodes.head ? "novel msg") :: Future.successful(0) :: Nil), 1 second)
+    }
+    group.system.shutdown()
+  }
+
+  "SafeFuture.traverse" should "sequence futures" in {
+    val result = Await.result(SafeFuture.traverse(0 :: 0 :: Nil)(Future.successful(_)), 1 second)
+    assert(result === List(0, 0))
+  }
+
+  it should "work for weird types" in {
+    val set = mutable.HashSet(0, 1, 2)
+    val future = SafeFuture.traverse(set)(x => Future.successful(x))
+    val result = Await.result(future, 1 second)
+    assert(result === set)
+  }
+
+  it should "drop timeouts" in {
+    val graph = FixedDegreeRandomGraph(10, 0, {(name:String, system:ActorSystem) =>
+      system.actorOf(Props(new FallableNode(() => 0, .5)), name = name)})
+
+    val future = SafeFuture.traverse(graph.nodes)(_ ? GetGroup())
+    assert(Await.result(future, 2 seconds).asInstanceOf[Vector[_]].size > 0)
+    graph.system.shutdown()
+  }
+
+  it should "fail for all exceptions other than timeouts" in {
+    val group = Group
+    intercept[Exception] {
+      Await.result(SafeFuture.traverse("novel msg" :: GetSecret() :: Nil)(group.nodes.head ? _), 1 second)
+    }
+    group.system.shutdown()
+  }
+
+
+
   "A group" should "securely compute totals" in {
     val group = Group
-    val direct = Future.traverse(group.nodes)(node => node ? GetSecret)
+    val direct = Future.traverse(group.nodes)(node => node ? GetSecret())
     val job = random.nextInt()
     val bothFuture = for {
       secure <- Future.traverse(group.nodes)({node => node ? SecureSum(job)}).mapTo[IndexedSeq[Int]]
@@ -43,17 +101,14 @@ class PPDMSpec extends FlatSpec {
     group.system.shutdown()
   }
 
-  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factory = Node.spawn _, debug:Boolean = false) = new {
+  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factory = Node.spawn _, timeoutMultiple:Int = 1) = new {
     require(degree.toFloat / 2 == degree / 2 , "The degree must be even")
     val system = ActorSystem("ppdm")
     val nodes = for(i <- 0 until size) yield factory("node" + i.toString, system)
-    if (debug) {
-      Await.result(nodes.head ? Debug, 1 second)
-    }
     val repeatedNodes = List.fill(degree / 2)(List(nodes.toSeq: _*)).flatten
     val pairs = repeatedNodes zip random.shuffle(repeatedNodes) filter (pair => pair._1 != pair._2)
     def doubleLink(pair:(ActorRef, ActorRef)) = {Future.sequence((pair._1 ? AddNeighbor(pair._2)) :: (pair._2 ? AddNeighbor(pair._1)) :: Nil)}
-    Await.result(Future.traverse(pairs)(doubleLink), 10 seconds)
+    Await.result(Future.traverse(pairs)(doubleLink), 2*timeoutMultiple seconds)
   }
 
   "A Fixed-Degree Random Graph" should "have the size and degree we asked for" in {
@@ -62,17 +117,18 @@ class PPDMSpec extends FlatSpec {
     val tolerance = .9
     val graph = FixedDegreeRandomGraph(size, degree)
     assert(graph.nodes.length == size)
-    val neighborSets = Await.result(Future.traverse(graph.nodes)(_ ? GetNeighbors), 1 second).asInstanceOf[Vector[Set[ActorRef]]]
+    val neighborSets = Await.result(Future.traverse(graph.nodes)(_ ? GetNeighbors()), 1 second).asInstanceOf[Vector[Set[ActorRef]]]
     //println(neighborSets map (_.size))
     //TODO: how is it possible that we sometimes get degree 3 nodes?
     assert(neighborSets.count(_.size == degree) > tolerance * size)
     graph.system.shutdown()
   }
 
-  it should "form groups" in {
+  /*it should "form groups" in {
     val graph = FixedDegreeRandomGraph(500, 6)
-    Await.result(graph.nodes.head ? Start, 5 seconds)
-    val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup), 5 seconds)
+    Await.result(graph.nodes.head ? Debug(), 1 second)
+    Await.result(graph.nodes.head ? Start(), 5 seconds)
+    val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup()), 5 seconds)
     val groups = redundantGroups.asInstanceOf[Vector[mutable.Set[ActorRef]]].distinct
     //println(groups map {_ size})
     val nodesFromGroups = groups flatMap {elem => elem}
@@ -87,31 +143,48 @@ class PPDMSpec extends FlatSpec {
       assert(willPass, "Group is the correct size.")
     }
     graph.system.shutdown()
-  }
+  } */
 
-  def testSecureSumming(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _, debug:Boolean = false) = {
-    val graph = FixedDegreeRandomGraph(size, degree, factory, debug)
+  type Hook = (IndexedSeq[ActorRef] => Unit)
+
+  def testSecureSumming(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _, hook:Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
+    val graph = FixedDegreeRandomGraph(size, degree, factory, timeoutMultiple)
+    hook(graph.nodes)
     val finished = for {
-      grouping <- graph.nodes.head.ask(Start)(30 seconds)
-      secureMap <- (graph.nodes.head ? TreeSum).mapTo[ActorMap]
+      grouping <- graph.nodes.head.ask(Start())(5*timeoutMultiple seconds)
+      secureMap <- (graph.nodes.head ? TreeSum()).mapTo[ActorMap]
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>
         sums.groupBy(x => x).maxBy((pair:(Int, List[Int])) => pair._2.length)._1
       }
       secureSum = secureGroupSums.fold(0)(_ + _)
-      insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret).mapTo[Int]})(_ + _)
+      insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret()).mapTo[Int]})(_ + _)
     } yield assert(secureSum === insecureSum, "Secure and insecure sums should be equal")
-    Await.result(finished, 1 minute)
+    Await.result(finished, 10*timeoutMultiple seconds)
     graph.system.shutdown()
   }
 
-  it should "sum securely" in testSecureSumming()
+  //it should "sum securely" in testSecureSumming()
 
   def passThrough(name:String, system:ActorSystem) = {
     system.actorOf(Props(new FallableNode({() => 0}, 0)), name = name)
   }
 
-  "Pass-through fallableNodes" should "do nothing" in testSecureSumming(size = 100, factory = passThrough _)
+  //"Pass-through fallableNodes" should "sum securely" in testSecureSumming(size = 100, factory = passThrough _)
+
+  def dyingNodes(name:String, system:ActorSystem) = {
+    system.actorOf(Props(new FallableNode(() => 0, .001)), name = name)
+  }
+
+  def prepRoot(nodes:IndexedSeq[ActorRef]):Unit = {
+    val finished = for {
+      immune <- nodes.head ? SetImmune()
+      debug <- nodes.head ? Debug()
+    } yield debug
+    Await.result(finished, 1 second)
+  }
+
+  //"Dying nodes" should "sum securely" in testSecureSumming(size = 10, factory = dyingNodes _, hook = prepRoot _)
 
   def powerLaw(start:Double, stop:Double, exponent:Double):(() => Double) = {
     def innerFunc:Double = {
@@ -126,6 +199,6 @@ class PPDMSpec extends FlatSpec {
     system.actorOf(Props(new FallableNode(typicalLatency _, 0)), name = name)
   }
 
-  "Latent nodes" should "do nothing" in testSecureSumming(size = 2500, factory = latentNodes _, debug = true)
+  //"Latent nodes" should "sum securely" in testSecureSumming(size = 2500, factory = latentNodes _, timeoutMultiple = 5)
 }
 

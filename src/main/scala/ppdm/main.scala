@@ -12,7 +12,7 @@ import collection._
 import math.abs
 
 object Constants {
-  implicit val timeout = Timeout(10 seconds)
+  implicit val timeout = Timeout(1 second)
   val random = new Random()
   val modulus = 100
   val groupSize = 10
@@ -24,25 +24,26 @@ object Constants {
 }
 import Constants._
 
-sealed abstract class NodeMsg()
+sealed abstract class VulnerableMsg()
+sealed abstract class SafeMsg() //for testing only; we don't want to consider the failure of these messages
 
-case class Finished() extends NodeMsg
-case class SetGroup(group:mutable.HashSet[ActorRef]) extends NodeMsg
-case class GetSecret() extends NodeMsg
-case class SecureSum(job:Int) extends NodeMsg
-case class Key(key:Int, job:Int) extends NodeMsg
-case class Debug() extends NodeMsg
-case class GetDegree() extends NodeMsg
-case class AddNeighbor(neighbor:ActorRef) extends NodeMsg
-case class StartYourOwnGroup(stableRef:ActorRef) extends NodeMsg
-case class JoinMe(group:mutable.HashSet[ActorRef], stableRef:ActorRef) extends NodeMsg
-case class GetGroup() extends NodeMsg
-case class Gossip(group:mutable.HashSet[ActorRef], debug:Boolean) extends NodeMsg
-case class GroupingFinishedMsg() extends NodeMsg
-case class Start() extends NodeMsg
-case class Invite() extends NodeMsg
-case class GetNeighbors() extends NodeMsg
-case class TreeSum() extends NodeMsg
+case class Finished() extends VulnerableMsg
+case class SetGroup(group:mutable.HashSet[ActorRef]) extends SafeMsg
+case class GetSecret() extends SafeMsg
+case class SecureSum(job:Int) extends VulnerableMsg
+case class Key(key:Int, job:Int) extends VulnerableMsg
+case class Debug() extends SafeMsg
+case class GetDegree() extends SafeMsg
+case class AddNeighbor(neighbor:ActorRef) extends SafeMsg
+case class StartYourOwnGroup(stableRef:ActorRef) extends VulnerableMsg
+case class JoinMe(group:mutable.HashSet[ActorRef], stableRef:ActorRef) extends VulnerableMsg
+case class GetGroup() extends VulnerableMsg
+case class Gossip(group:mutable.HashSet[ActorRef], debug:Boolean) extends VulnerableMsg
+case class GroupingFinishedMsg() extends VulnerableMsg
+case class Start() extends SafeMsg
+case class Invite() extends VulnerableMsg
+case class GetNeighbors() extends SafeMsg
+case class TreeSum() extends VulnerableMsg
 
 object Node {
   def spawn(name:String, system:ActorSystem) = {
@@ -78,8 +79,8 @@ class Node extends Actor {
           if (neighbors.size == 0)
             println("I'm lonely in groupingFinishedMethod")
           if (group.size + 1 < groupSize * gsTolerance) {
-            for {
-              neighborGroups <- Future.traverse(neighbors)(_ ? GetGroup).mapTo[mutable.Set[mutable.Set[ActorRef]]]
+            val groupsFixed = for {
+              neighborGroups <- SafeFuture.traverse(neighbors)(_ ? GetGroup()).mapTo[mutable.Set[mutable.Set[ActorRef]]]
               otherGroup = neighborGroups reduce {(left, right)  =>
                 if (abs(left.size - groupSize) < abs(right.size - groupSize))
                   left
@@ -87,12 +88,14 @@ class Node extends Actor {
                   right
               }
               merged = group ++= otherGroup
-              gossipingDone <- Future.traverse(group)(_ ? Gossip(group + self, debug))
-            } yield pRef ! GroupingFinishedMsg
+              gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self, debug))
+            } yield pRef ! GroupingFinishedMsg()
+            groupsFixed onFailure {case e:Throwable => throw e}
+            groupsFixed onSuccess {case _ => println("group repair finished")}
           } else {
             if (debug)
               println("Reporting done")
-            pRef ! GroupingFinishedMsg
+            pRef ! GroupingFinishedMsg()
           }
         case None => println("GroupingFinished: parent is None")
       }
@@ -101,7 +104,7 @@ class Node extends Actor {
   }
 
 
-  def inviteLater = context.system.scheduler.scheduleOnce(100 milliseconds, self, Invite)
+  def inviteLater = context.system.scheduler.scheduleOnce(100 milliseconds, self, Invite())
 
   def merge(left:ActorMap, right:ActorMap) = {
     immutable.HashMap(((left.keySet ++ right.keySet) map {key =>
@@ -110,7 +113,7 @@ class Node extends Actor {
   }
 
   def receive: PartialFunction[Any, Unit] = {
-    case TreeSum =>
+    case TreeSum() =>
       val senderCopy = sender
       if (debug)
         println("Tree sum")
@@ -119,7 +122,7 @@ class Node extends Actor {
           val job = Random.nextInt()
           val immutableGroup = immutable.HashSet(group.toSeq:_*) + self
           val groupSum = Future.fold(immutableGroup map {node => (node ? SecureSum(job)).mapTo[Int]})(0)(_ + _)
-          val childrenSums = children map {node => (node ? TreeSum).mapTo[ActorMap]}
+          val childrenSums = children map {node => (node ? TreeSum()).mapTo[ActorMap]}
           val treeSum = for {
             childrenTable <- Future.fold(childrenSums)(immutable.HashMap[ActorSet, List[Int]]():ActorMap)(merge(_,_))
             groupSum <- groupSum
@@ -131,14 +134,14 @@ class Node extends Actor {
           sender ! Status.Failure(new Exception("Parent is none. Did you TreeSum before forming groups?"))
       }
 
-    case GetNeighbors =>
+    case GetNeighbors() =>
       if (debug)
         println("Get neighbors")
       if (neighbors.size == 0)
         println("I'm lonely in getNeighbors")
       sender ! neighbors
 
-    case Invite =>
+    case Invite() =>
       if (debug)
         println("inviteFrom was called")
       if (group.size < groupSize) {
@@ -154,7 +157,7 @@ class Node extends Actor {
               inviteLater
             case Failure(_) =>
               outsiders remove outsider
-              self ! Invite
+              self ! Invite()
           }
           case None => groupingFinishedMethod
         }
@@ -171,19 +174,19 @@ class Node extends Actor {
         }) onComplete {case _ => groupingFinishedMethod}
       }
 
-    case Start =>
+    case Start() =>
       if (debug)
         println("Start")
       self ! StartYourOwnGroup(sender)
 
-    case Finished =>
+    case Finished() =>
       if (false)
         println("Finished")
-    case GetGroup =>
+    case GetGroup() =>
       if (debug)
         println("GetGroup")
       sender ! group + self
-    case GroupingFinishedMsg =>
+    case GroupingFinishedMsg() =>
       if (debug)
         println("GroupingIsDone")
       unfinishedChildren -= 1
@@ -198,9 +201,9 @@ class Node extends Actor {
           case Some(_) => sender ! Status.Failure(new Exception)
           case None => {
             parent = Some(stableRef)
-            sender ! Finished
+            sender ! Finished()
             outsiders = mutable.HashSet[ActorRef](neighbors.toSeq: _*)
-            self ! Invite
+            self ! Invite()
           }
 
         }
@@ -214,7 +217,7 @@ class Node extends Actor {
         case None => {
           parent = Some(stableRef)
           group = newGroup
-          sender ! Finished
+          sender ! Finished()
           for (member <- group)
             member ! Gossip(group + self, debug)
           outsiders = neighbors - stableRef
@@ -235,8 +238,8 @@ class Node extends Actor {
         if (false)
           println("Not gossiping")
       }
-      sender ! Finished
-    case GetDegree =>
+      sender ! Finished()
+    case GetDegree() =>
       if (debug)
         println("GetDegree")
       sender ! neighbors.size
@@ -245,12 +248,12 @@ class Node extends Actor {
       neighbors add neighbor
       if (debug)
         println("AddNeighbor, degree is " + neighbors.size.toString)
-      sender ! Finished
-    case Debug =>
+      sender ! Finished()
+    case Debug() =>
       println("Debug enabled")
       debug = true
-      sender ! Finished
-    case GetSecret =>
+      sender ! Finished()
+    case GetSecret() =>
       if (debug)
         println("GetSecret " + secret.toString)
       sender ! secret
@@ -258,7 +261,8 @@ class Node extends Actor {
       if(debug)
         println("SetGroup")
       group = newGroup.filter(_ != self)
-      sender ! Finished
+      sender ! Finished()
+
     case SecureSum(job) =>
       if (debug)
         println("SecureSum")
