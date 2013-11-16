@@ -19,7 +19,6 @@ object Constants {
   type ActorSet = immutable.Set[ActorRef]
   type ActorMap = immutable.Map[ActorSet, List[Int]]
   def shortGroup(group:ActorSet) = (group map (_.path.name)).fold("")(_ + _)
-  type Factory = (String, ActorSystem) => ActorRef
 }
 import Constants._
 import NewAskPattern.ask
