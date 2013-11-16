@@ -40,8 +40,6 @@ object PatientAsk {
   }
 }
 
-case class HeartBeat()
-
 case class PatientAskActor(timeout:Timeout, promise:Promise[Any], ex:TimeoutException) extends Actor {
 
   def scheduleExpiration = context.system.scheduler.scheduleOnce(2 * timeout.duration) {

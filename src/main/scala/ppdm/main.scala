@@ -11,7 +11,7 @@ import collection._
 import math.abs
 
 object Constants {
-  implicit val timeout = Timeout(1 second)
+  implicit val timeout = Timeout(2 seconds)
   val random = new Random()
   val modulus = 100
   val groupSize = 10
@@ -44,12 +44,18 @@ case class Start() extends SafeMsg
 case class Invite() extends VulnerableMsg
 case class GetNeighbors() extends SafeMsg
 case class TreeSum() extends VulnerableMsg
+case class JoinMeFinished() extends VulnerableMsg
+case class JoinMeFailed() extends VulnerableMsg
+case class StartYourOwnGroupFinished() extends VulnerableMsg
+case class StartYourOwnGroupFailed() extends VulnerableMsg
+case class HeartBeat() extends VulnerableMsg
 
 object Node {
   def spawn(name:String, system:ActorSystem) = {
     system.actorOf(Props(new Node), name = name)
   }
 }
+
 
 case class TempDataForSumming(var sum:Int, var nKeys:Int, var asker:Option[ActorRef])
 
@@ -64,6 +70,14 @@ class Node extends Actor {
   var finishedHere = false
   var outsiders = mutable.HashSet[ActorRef]()
   var children = mutable.HashSet[ActorRef]()
+
+  def reassureParent = {
+    parent match {
+      case Some(pRef) =>
+        pRef ! HeartBeat()
+      case None => ()
+    }
+  }
 
   def jobsString = {
     if (jobs isEmpty)
@@ -82,7 +96,7 @@ class Node extends Actor {
         case Some(pRef) =>
           if (neighbors.size == 0)
             println("I'm lonely in groupingFinishedMethod")
-          pRef ! HeartBeat()
+          reassureParent
           if (group.size + 1 < groupSize * gsTolerance) {
             val groupsFixed = for {
               neighborGroups <- SafeFuture.traverse(neighbors)(_ ? GetGroup()).mapTo[mutable.Set[mutable.Set[ActorRef]]]
@@ -93,7 +107,7 @@ class Node extends Actor {
                   right
               }
               merged = group ++= otherGroup
-              reassuredConcernedParent = pRef ! HeartBeat()
+              reassuredConcernedParent = reassureParent
               gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self, debug))
             } yield pRef ! GroupingFinishedMsg()
             groupsFixed onFailure {case e:Throwable => throw e}
@@ -118,7 +132,11 @@ class Node extends Actor {
   }
 
   def receive: PartialFunction[Any, Unit] = {
-    case HeartBeat() => ()
+
+    case StartYourOwnGroupFinished() => ()
+
+    case HeartBeat() => reassureParent
+
     case TreeSum() =>
       val senderCopy = sender
       if (debug)
@@ -150,24 +168,23 @@ class Node extends Actor {
     case Invite() =>
       if (debug)
         println("inviteFrom was called")
-      parent match {
-        case Some(pRef) =>
-          pRef ! HeartBeat()
-      }
+      reassureParent
       if (group.size < groupSize) {
         if (debug)
           println("Inviting")
         outsiders headOption match {
           case Some(outsider) => outsider ? JoinMe(group + self, self) onComplete {
-            case Success(_) =>
+            case Success(JoinMeFinished()) =>
               group add outsider
               outsiders remove outsider
               unfinishedChildren += 1
               children add outsider
               inviteLater
-            case Failure(_) =>
+            case Success(JoinMeFailed()) =>
               outsiders remove outsider
               self ! Invite()
+            case Failure(e) =>
+              e.printStackTrace()
           }
           case None => groupingFinishedMethod
         }
@@ -176,10 +193,14 @@ class Node extends Actor {
           println("Rejecting")
         Future.traverse(outsiders)({outsider =>
           outsider ? StartYourOwnGroup(self) andThen {
-            case Success(_) =>
+            case Success(StartYourOwnGroupFinished()) =>
               unfinishedChildren +=1
               children add outsider
-            case Failure(_) => Unit
+              reassureParent
+            case Success(StartYourOwnGroupFailed()) =>
+              reassureParent
+            case Failure(e) =>
+              e.printStackTrace()
           }
         }) onComplete {case _ => groupingFinishedMethod}
       }
@@ -192,17 +213,16 @@ class Node extends Actor {
     case Finished() =>
       if (false)
         println("Finished")
+
     case GetGroup() =>
       if (debug)
         println("GetGroup")
       sender ! group + self
+
     case GroupingFinishedMsg() =>
       if (debug)
         println("GroupingIsDone")
-      parent match {
-        case Some(pRef) =>
-          pRef ! HeartBeat()
-      }
+      reassureParent
       unfinishedChildren -= 1
       if (finishedHere)
         groupingFinishedMethod
@@ -213,26 +233,29 @@ class Node extends Actor {
       if (debug)
           println("StartYourOwnGroup")
         parent match {
-          case Some(_) => sender ! Status.Failure(new Exception)
+          case Some(_) => sender ! StartYourOwnGroupFailed()
           case None => {
             parent = Some(stableRef)
-            sender ! Finished()
+            sender ! StartYourOwnGroupFinished()
             outsiders = mutable.HashSet[ActorRef](neighbors.toSeq: _*)
             self ! Invite()
           }
-
         }
+
     case JoinMe(newGroup, stableRef) =>
       if (neighbors.size == 0)
         println("I'm lonely in JoinMe")
       if (debug)
         println("JoinMe")
       parent match {
-        case Some(_) => sender ! Status.Failure(new Exception)
+        case Some(_) => {
+          sender ! JoinMeFailed()
+          reassureParent
+        }
         case None => {
           parent = Some(stableRef)
           group = newGroup
-          sender ! Finished()
+          sender ! JoinMeFinished()
           for (member <- group)
             member ! Gossip(group + self, debug)
           outsiders = neighbors - stableRef
@@ -245,6 +268,7 @@ class Node extends Actor {
         println("Gossip " + group.size.toString)// + "\n" + similarGroup.toString + "\n" + (group + self).toString)
       if (!(similarGroup subsetOf group + self)) {
         group ++= similarGroup - self
+        reassureParent
         if (debug)
           println("Gossiping " + group.size.toString)//self.toString + "\n" + group.size.toString + "\n" + similarGroup.toString + "\n" + (group + self).toString)
         for (member <- group)

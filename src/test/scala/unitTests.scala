@@ -33,7 +33,7 @@ class PPDMSpec extends FlatSpec {
   it should "drop timeouts" in {
     val group = Group
     val futures = (group.nodes.head ? Key(0, 0)) :: Future.successful(0) :: Nil
-    val result = Await.result(SafeFuture.sequence(futures), 2 seconds)
+    val result = Await.result(SafeFuture.sequence(futures), 3 seconds)
     assert(result.asInstanceOf[List[Int]] === List(0))
     group.system.shutdown()
   }
@@ -63,7 +63,7 @@ class PPDMSpec extends FlatSpec {
       system.actorOf(Props(new FallableNode(() => 0, .5)), name = name)})
 
     val future = SafeFuture.traverse(graph.nodes)(_ ? GetGroup())
-    assert(Await.result(future, 2 seconds).asInstanceOf[Vector[_]].size > 0)
+    assert(Await.result(future, 3 seconds).asInstanceOf[Vector[_]].size > 0)
     graph.system.shutdown()
   }
 
@@ -125,11 +125,11 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  it should "form groups" in {
-    val graph = FixedDegreeRandomGraph(500, 6)
-    Await.result(graph.nodes.head ? Debug(), 1 second)
-    Await.result(PatientAsk(graph.nodes.head, Start(), graph.system), 5 seconds)
-    val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup()), 5 seconds)
+  def testGrouping(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _, hook:Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
+    val graph = FixedDegreeRandomGraph(size, degree, factory, timeoutMultiple)
+    hook(graph.nodes)
+    Await.result(PatientAsk(graph.nodes.head, Start(), graph.system), 5*timeoutMultiple seconds)
+    val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup()), 5*timeoutMultiple seconds)
     val groups = redundantGroups.asInstanceOf[Vector[mutable.Set[ActorRef]]].distinct
     println(groups map {_ size})
     val nodesFromGroups = groups flatMap {elem => elem}
@@ -146,13 +146,15 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
+  it should "form groups" in testGrouping()
+
   type Hook = (IndexedSeq[ActorRef] => Unit)
 
   def testSecureSumming(size: Int = 500, degree: Int = 6, factory:Factory = Node.spawn _, hook:Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
     val graph = FixedDegreeRandomGraph(size, degree, factory, timeoutMultiple)
     hook(graph.nodes)
     val finished = for {
-      grouping <- graph.nodes.head.ask(Start(), 5*timeoutMultiple seconds)
+      grouping <- PatientAsk(graph.nodes.head, Start(), graph.system)(10 seconds)
       secureMap <- (graph.nodes.head ? TreeSum()).mapTo[ActorMap]
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>
@@ -165,13 +167,13 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  //it should "sum securely" in testSecureSumming()
+  it should "sum securely" in testSecureSumming()
 
   def passThrough(name:String, system:ActorSystem) = {
     system.actorOf(Props(new FallableNode({() => 0}, 0)), name = name)
   }
 
-  //"Pass-through fallableNodes" should "sum securely" in testSecureSumming(size = 100, factory = passThrough _)
+  "Pass-through fallableNodes" should "sum securely" in testSecureSumming(size = 100, factory = passThrough _)
 
   def dyingNodes(name:String, system:ActorSystem) = {
     system.actorOf(Props(new FallableNode(() => 0, .001)), name = name)
@@ -200,6 +202,7 @@ class PPDMSpec extends FlatSpec {
     system.actorOf(Props(new FallableNode(typicalLatency _, 0)), name = name)
   }
 
-  //"Latent nodes" should "sum securely" in testSecureSumming(size = 2500, factory = latentNodes _, timeoutMultiple = 5)
-}
+  "Latent nodes" should "form grooups" in testGrouping(size = 500, factory = latentNodes _, timeoutMultiple = 5, hook = prepRoot _)
 
+  //"Latent nodes" should "sum securely" in testSecureSumming(size = 500, factory = latentNodes _, timeoutMultiple = 5, hook = prepRoot _)
+}
