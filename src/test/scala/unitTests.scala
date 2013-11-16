@@ -10,6 +10,7 @@ import collection._
 
 import org.scalatest.FlatSpec
 import ppdm.Constants._
+import NewAskPattern.ask
 
 class PPDMSpec extends FlatSpec {
   def Group = new {
@@ -124,13 +125,13 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  /*it should "form groups" in {
+  it should "form groups" in {
     val graph = FixedDegreeRandomGraph(500, 6)
     Await.result(graph.nodes.head ? Debug(), 1 second)
-    Await.result(graph.nodes.head ? Start(), 5 seconds)
+    Await.result(PatientAsk(graph.nodes.head, Start(), graph.system), 5 seconds)
     val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup()), 5 seconds)
     val groups = redundantGroups.asInstanceOf[Vector[mutable.Set[ActorRef]]].distinct
-    //println(groups map {_ size})
+    println(groups map {_ size})
     val nodesFromGroups = groups flatMap {elem => elem}
     val distinctNodes = nodesFromGroups.distinct
     assert(distinctNodes.length == nodesFromGroups.length, "Nodes are in at most one group")
@@ -143,7 +144,7 @@ class PPDMSpec extends FlatSpec {
       assert(willPass, "Group is the correct size.")
     }
     graph.system.shutdown()
-  } */
+  }
 
   type Hook = (IndexedSeq[ActorRef] => Unit)
 
@@ -151,7 +152,7 @@ class PPDMSpec extends FlatSpec {
     val graph = FixedDegreeRandomGraph(size, degree, factory, timeoutMultiple)
     hook(graph.nodes)
     val finished = for {
-      grouping <- graph.nodes.head.ask(Start())(5*timeoutMultiple seconds)
+      grouping <- graph.nodes.head.ask(Start(), 5*timeoutMultiple seconds)
       secureMap <- (graph.nodes.head ? TreeSum()).mapTo[ActorMap]
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>

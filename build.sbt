@@ -10,4 +10,4 @@ libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.2.1"
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.0.M8" % "test"
 
-testOptions in Test += Tests.Argument("-oD")
+testOptions in Test += Tests.Argument("-oDF")

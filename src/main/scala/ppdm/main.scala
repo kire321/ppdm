@@ -1,7 +1,6 @@
 package ppdm;
 
 import akka.actor._
-import akka.pattern._
 import akka.util.Timeout
 
 import scala.concurrent.duration._
@@ -23,6 +22,7 @@ object Constants {
   type Factory = (String, ActorSystem) => ActorRef
 }
 import Constants._
+import NewAskPattern.ask
 
 sealed abstract class VulnerableMsg()
 sealed abstract class SafeMsg() //for testing only; we don't want to consider the failure of these messages
@@ -72,12 +72,17 @@ class Node extends Actor {
       jobs map {x => "\t" + x._1.toString + "   " + x._2.toString + "\n"} reduce {_ + _}
   }
 
+  def maybeJoinSmallestGroup = {
+
+  }
+
   def groupingFinishedMethod = {
     if (unfinishedChildren == 0)
       parent match {
         case Some(pRef) =>
           if (neighbors.size == 0)
             println("I'm lonely in groupingFinishedMethod")
+          pRef ! HeartBeat()
           if (group.size + 1 < groupSize * gsTolerance) {
             val groupsFixed = for {
               neighborGroups <- SafeFuture.traverse(neighbors)(_ ? GetGroup()).mapTo[mutable.Set[mutable.Set[ActorRef]]]
@@ -88,10 +93,10 @@ class Node extends Actor {
                   right
               }
               merged = group ++= otherGroup
+              reassuredConcernedParent = pRef ! HeartBeat()
               gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self, debug))
             } yield pRef ! GroupingFinishedMsg()
             groupsFixed onFailure {case e:Throwable => throw e}
-            groupsFixed onSuccess {case _ => println("group repair finished")}
           } else {
             if (debug)
               println("Reporting done")
@@ -113,6 +118,7 @@ class Node extends Actor {
   }
 
   def receive: PartialFunction[Any, Unit] = {
+    case HeartBeat() => ()
     case TreeSum() =>
       val senderCopy = sender
       if (debug)
@@ -144,6 +150,10 @@ class Node extends Actor {
     case Invite() =>
       if (debug)
         println("inviteFrom was called")
+      parent match {
+        case Some(pRef) =>
+          pRef ! HeartBeat()
+      }
       if (group.size < groupSize) {
         if (debug)
           println("Inviting")
@@ -189,9 +199,14 @@ class Node extends Actor {
     case GroupingFinishedMsg() =>
       if (debug)
         println("GroupingIsDone")
+      parent match {
+        case Some(pRef) =>
+          pRef ! HeartBeat()
+      }
       unfinishedChildren -= 1
       if (finishedHere)
         groupingFinishedMethod
+
     case StartYourOwnGroup(stableRef) =>
       if (neighbors.size == 0)
         println("I'm lonely in StartYourOwnGroup")
@@ -239,6 +254,7 @@ class Node extends Actor {
           println("Not gossiping")
       }
       sender ! Finished()
+
     case GetDegree() =>
       if (debug)
         println("GetDegree")
@@ -249,14 +265,17 @@ class Node extends Actor {
       if (debug)
         println("AddNeighbor, degree is " + neighbors.size.toString)
       sender ! Finished()
+
     case Debug() =>
       println("Debug enabled")
       debug = true
       sender ! Finished()
+
     case GetSecret() =>
       if (debug)
         println("GetSecret " + secret.toString)
       sender ! secret
+
     case SetGroup(newGroup) =>
       if(debug)
         println("SetGroup")
