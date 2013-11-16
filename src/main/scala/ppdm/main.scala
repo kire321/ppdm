@@ -122,7 +122,7 @@ class Node extends Actor {
   }
 
 
-  def inviteLater = context.system.scheduler.scheduleOnce(500 milliseconds, self, Invite())
+  def inviteLater = context.system.scheduler.scheduleOnce(1 second, self, Invite())
 
   def merge(left:ActorMap, right:ActorMap) = {
     immutable.HashMap(((left.keySet ++ right.keySet) map {key =>
@@ -144,8 +144,12 @@ class Node extends Actor {
         case Some(pRef) => {
           val job = Random.nextInt()
           val immutableGroup = immutable.HashSet(group.toSeq:_*) + self
-          val groupSum = Future.fold(immutableGroup map {node => (node ? SecureSum(job)).mapTo[Int]})(0)(_ + _)
-          val childrenSums = children map {node => (node ? TreeSum()).mapTo[ActorMap]}
+          val groupSum = Future.fold(immutableGroup map {node =>
+            PatientAsk(node, SecureSum(job)).mapTo[Int] andThen {case _ => senderCopy ! HeartBeat()}
+          })(0)(_ + _)
+          val childrenSums = children map {node =>
+            PatientAsk(node, TreeSum()).mapTo[ActorMap] andThen {case _ => senderCopy ! HeartBeat()}
+          }
           val treeSum = for {
             childrenTable <- Future.fold(childrenSums)(immutable.HashMap[ActorSet, List[Int]]():ActorMap)(merge(_,_))
             groupSum <- groupSum
@@ -341,6 +345,8 @@ class Node extends Actor {
             ref ! jobs(job).sum
             if (debug)
               println("Key Finished")
+          } else {
+            ref ! HeartBeat()
           }
         case None => Unit
       }

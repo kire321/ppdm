@@ -18,7 +18,7 @@ class PPDMSpec extends FlatSpec {
     val direct = Future.traverse(group.nodes)(node => node ? GetSecret())
     val job = random.nextInt()
     val bothFuture = for {
-      secure <- Future.traverse(group.nodes)({node => node ? SecureSum(job)}).mapTo[IndexedSeq[Int]]
+      secure <- Future.traverse(group.nodes)({node => PatientAsk(node, SecureSum(job), group.system)}).mapTo[IndexedSeq[Int]]
       direct <- direct.mapTo[Vector[Int]]
     } yield direct.reduce(_ + _) :: secure.reduce(_ + _) :: Nil
     val both = Await.result(bothFuture, 1 second)
@@ -30,7 +30,7 @@ class PPDMSpec extends FlatSpec {
     val group = Fixtures.Group
     val futures = (0 until 2) map {_ =>
       val msg = SecureSum(random.nextInt())
-      val partialSums = group.nodes map {node => (node ? msg).mapTo[Int]}
+      val partialSums = group.nodes map {node => PatientAsk(node, msg, group.system).mapTo[Int]}
       Future.reduce(partialSums)(_ + _)
     }
     val sums = Await.result(Future.sequence(futures), 5 second)
@@ -57,5 +57,7 @@ class PPDMSpec extends FlatSpec {
 
   "Pass-through fallableNodes" should "sum securely" in Tests.secureSumming(size = 100, factory = Factories.passThrough _)
 
-  "Latent nodes" should "form grooups" in Tests.grouping(size = 500, factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
+  "Latent nodes" should "form groups" in Tests.grouping(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
+
+  "Latent nodes" should "sum securely" in Tests.secureSumming(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
 }

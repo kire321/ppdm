@@ -18,23 +18,23 @@ object Fixtures {
     Await.result(Future.traverse(nodes)({node => node ? SetGroup(mutable.HashSet(nodes.toSeq: _*))}), 1 second)
   }
 
-  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factories.Factory = Node.spawn _, timeoutMultiple:Int = 1) = new {
+  def FixedDegreeRandomGraph(size:Int, degree:Int, factory:Factories.Factory = Node.spawn _) = new {
     require(degree.toFloat / 2 == degree / 2 , "The degree must be even")
     val system = ActorSystem("ppdm")
     val nodes = for(i <- 0 until size) yield factory("node" + i.toString, system)
     val repeatedNodes = List.fill(degree / 2)(List(nodes.toSeq: _*)).flatten
     val pairs = repeatedNodes zip random.shuffle(repeatedNodes) filter (pair => pair._1 != pair._2)
     def doubleLink(pair:(ActorRef, ActorRef)) = {Future.sequence((pair._1 ? AddNeighbor(pair._2)) :: (pair._2 ? AddNeighbor(pair._1)) :: Nil)}
-    Await.result(Future.traverse(pairs)(doubleLink), 2*timeoutMultiple seconds)
+    Await.result(Future.traverse(pairs)(doubleLink), 2 seconds)
   }
 }
 
 object Tests {
 
   def grouping(size: Int = 500, degree: Int = 6, factory:Factories.Factory = Node.spawn _, hook:Hooks.Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
-    val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory, timeoutMultiple)
+    val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory)
     hook(graph.nodes)
-    Await.result(PatientAsk(graph.nodes.head, Start(), graph.system), 5*timeoutMultiple seconds)
+    Await.result(PatientAsk(graph.nodes.head, Start(), graph.system), 10*timeoutMultiple seconds)
     val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup()), 5*timeoutMultiple seconds)
     val groups = redundantGroups.asInstanceOf[Vector[mutable.Set[ActorRef]]].distinct
     //println(groups map {_ size})
@@ -42,9 +42,8 @@ object Tests {
     val distinctNodes = nodesFromGroups.distinct
     assert(distinctNodes.length == nodesFromGroups.length, "Nodes are in at most one group")
     assert(distinctNodes.length == graph.nodes.length, "Nodes are in at least one group")
-    val tolerance = .5
     groups map {_.size} foreach {length =>
-      val willPass = tolerance * groupSize <= length && length <= groupSize / tolerance
+      val willPass = .5 * groupSize <= length && length <= groupSize *3
       if (!willPass)
         println("Length " + length.toString + " will fail test")
       assert(willPass, "Group is the correct size.")
@@ -53,11 +52,11 @@ object Tests {
   }
 
   def secureSumming(size: Int = 500, degree: Int = 6, factory:Factories.Factory = Node.spawn _, hook:Hooks.Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
-    val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory, timeoutMultiple)
+    val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory)
     hook(graph.nodes)
     val finished = for {
-      grouping <- PatientAsk(graph.nodes.head, Start(), graph.system)(10 seconds)
-      secureMap <- (graph.nodes.head ? TreeSum()).mapTo[ActorMap]
+      grouping <- PatientAsk(graph.nodes.head, Start(), graph.system)
+      secureMap <- PatientAsk(graph.nodes.head, TreeSum(), graph.system).mapTo[ActorMap]
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>
         sums.groupBy(x => x).maxBy((pair:(Int, List[Int])) => pair._2.length)._1

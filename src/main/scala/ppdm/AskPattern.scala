@@ -31,6 +31,10 @@ class BetterTimeoutMessageSupportAskableRef(ref: ActorRef) {
 object PatientAsk {
   val random = new java.util.Random()
 
+  def apply(server:ActorRef, msg:Any)(implicit timeout:Timeout, context:ActorContext): Future[Any] = {
+    apply(server, msg, context.system)
+  }
+
   def apply(server:ActorRef, msg:Any, system:ActorSystem)(implicit timeout:Timeout): Future[Any] = {
     val promise = Promise[Any]()
     val ex = new TimeoutException(s"Timed out sending message $msg to recipient ${server.path} using timeout of ${timeout.duration}")
