@@ -123,7 +123,7 @@ class Node extends Actor {
   }
 
 
-  def inviteLater = context.system.scheduler.scheduleOnce(100 milliseconds, self, Invite())
+  def inviteLater = context.system.scheduler.scheduleOnce(500 milliseconds, self, Invite())
 
   def merge(left:ActorMap, right:ActorMap) = {
     immutable.HashMap(((left.keySet ++ right.keySet) map {key =>

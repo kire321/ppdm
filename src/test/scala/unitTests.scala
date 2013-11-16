@@ -136,9 +136,8 @@ class PPDMSpec extends FlatSpec {
     val distinctNodes = nodesFromGroups.distinct
     assert(distinctNodes.length == nodesFromGroups.length, "Nodes are in at most one group")
     assert(distinctNodes.length == graph.nodes.length, "Nodes are in at least one group")
-    val tolerance = .5
     groups map {_.size} foreach {length =>
-      val willPass = tolerance * groupSize <= length && length <= groupSize / tolerance
+      val willPass = .5 * groupSize <= length && length <= groupSize * 3
       if (!willPass)
         println("Length " + length.toString + " will fail test")
       assert(willPass, "Group is the correct size.")
