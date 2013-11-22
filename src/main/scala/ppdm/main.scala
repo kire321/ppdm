@@ -37,7 +37,7 @@ case class AddNeighbor(neighbor:ActorRef) extends SafeMsg
 case class StartYourOwnGroup(stableRef:ActorRef) extends VulnerableMsg
 case class JoinMe(group:mutable.HashSet[ActorRef], stableRef:ActorRef) extends VulnerableMsg
 case class GetGroup() extends VulnerableMsg
-case class Gossip(group:mutable.HashSet[ActorRef], debug:Boolean) extends VulnerableMsg
+case class Gossip(group:mutable.HashSet[ActorRef]) extends VulnerableMsg
 case class GroupingFinishedMsg() extends VulnerableMsg
 case class Start() extends SafeMsg
 case class Invite() extends VulnerableMsg
@@ -47,7 +47,9 @@ case class JoinMeFinished() extends VulnerableMsg
 case class JoinMeFailed() extends VulnerableMsg
 case class StartYourOwnGroupFinished() extends VulnerableMsg
 case class StartYourOwnGroupFailed() extends VulnerableMsg
-case class HeartBeat() extends VulnerableMsg
+case class HeartBeat() extends SafeMsg
+case class Ping() extends SafeMsg
+case class HesDead(him:ActorRef) extends VulnerableMsg
 
 object Node {
   def spawn(name:String, system:ActorSystem) = {
@@ -107,7 +109,10 @@ class Node extends Actor {
               }
               merged = group ++= otherGroup
               reassuredConcernedParent = reassureParent
-              gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self, debug))
+              alive <- SafeFuture.traverse(group)(node => (node ? Gossip(group + self)) map (_ => node))
+              dead = group -- alive
+              bringOutYourDead = group = alive
+              condolencesSent = (alive zip dead) map {pair => pair._1 ! HesDead(pair._2)}
             } yield pRef ! GroupingFinishedMsg()
             groupsFixed onFailure {case e:Throwable => throw e}
           } else {
@@ -121,7 +126,6 @@ class Node extends Actor {
       finishedHere = true
   }
 
-
   def inviteLater = context.system.scheduler.scheduleOnce(1 second, self, Invite())
 
   def merge(left:ActorMap, right:ActorMap) = {
@@ -131,6 +135,13 @@ class Node extends Actor {
   }
 
   def receive: PartialFunction[Any, Unit] = {
+
+    case HesDead(deadGuy) =>
+      if (debug)
+        println("He's dead")
+      group -= deadGuy
+
+    case Ping() => sender ! Finished()
 
     case StartYourOwnGroupFinished() => ()
 
@@ -183,11 +194,9 @@ class Node extends Actor {
               unfinishedChildren += 1
               children add outsider
               inviteLater
-            case Success(JoinMeFailed()) =>
+            case _ =>
               outsiders remove outsider
               self ! Invite()
-            case Failure(e) =>
-              e.printStackTrace()
           }
           case None => groupingFinishedMethod
         }
@@ -200,10 +209,8 @@ class Node extends Actor {
               unfinishedChildren +=1
               children add outsider
               reassureParent
-            case Success(StartYourOwnGroupFailed()) =>
+            case _ =>
               reassureParent
-            case Failure(e) =>
-              e.printStackTrace()
           }
         }) onComplete {case _ => groupingFinishedMethod}
       }
@@ -260,27 +267,30 @@ class Node extends Actor {
           group = newGroup
           sender ! JoinMeFinished()
           for (member <- group)
-            member ! Gossip(group + self, debug)
+            member ! Gossip(group + self)
           outsiders = neighbors - stableRef
           inviteLater
         }
       }
 
-    case Gossip(similarGroup, otherDebug) =>
-      if (false)
-        println("Gossip " + group.size.toString)// + "\n" + similarGroup.toString + "\n" + (group + self).toString)
+    case Gossip(similarGroup) =>
       if (!(similarGroup subsetOf group + self)) {
-        group ++= similarGroup - self
-        reassureParent
-        if (debug)
-          println("Gossiping " + group.size.toString)//self.toString + "\n" + group.size.toString + "\n" + similarGroup.toString + "\n" + (group + self).toString)
-        for (member <- group)
-          member ! Gossip(group + self, debug)
+        val maybeAddThese = similarGroup -- (group + self)
+        val senderCopy = sender
+        SafeFuture.traverse(maybeAddThese){node =>
+          (node ? Ping()) map (_ => node) andThen {case _ => reassureParent}
+        } onComplete {
+          case Success(addThese) =>
+            group ++= addThese
+            for (member <- group)
+              member ! Gossip(group + self)
+            senderCopy ! Finished()
+          case Failure(e) =>
+            println(e.getMessage)
+        }
       } else {
-        if (false)
-          println("Not gossiping")
+        sender ! Finished()
       }
-      sender ! Finished()
 
     case GetDegree() =>
       if (debug)

@@ -64,7 +64,7 @@ object Tests {
       secureSum = secureGroupSums.fold(0)(_ + _)
       insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret()).mapTo[Int]})(_ + _)
     } yield assert(secureSum == insecureSum, "Secure and insecure sums should be equal")
-    Await.result(finished, 10*timeoutMultiple seconds)
+    Await.result(finished, 20*timeoutMultiple seconds)
     graph.system.shutdown()
   }
 }
@@ -79,6 +79,10 @@ object Hooks {
     } yield debug
     Await.result(finished, 1 second)
   }
+
+  def debug(nodes:IndexedSeq[ActorRef]):Unit = {
+    Await.result(nodes.head ? Debug(), 1 second)
+  }
 }
 
 object Factories {
@@ -86,11 +90,11 @@ object Factories {
   type Factory = (String, ActorSystem) => ActorRef
 
   def passThrough(name:String, system:ActorSystem) = {
-    system.actorOf(Props(new FallableNode({() => 0}, 0)), name = name)
+    system.actorOf(Props(new FallableNode({() => 0}, 0, 100)), name = name)
   }
 
   def dyingNodes(name:String, system:ActorSystem) = {
-    system.actorOf(Props(new FallableNode(() => 0, .001)), name = name)
+    system.actorOf(Props(new FallableNode(() => 0, .1, 100)), name = name)
   }
 
   def powerLaw(start:Double, stop:Double, exponent:Double):(() => Double) = {
@@ -103,6 +107,6 @@ object Factories {
   def typicalLatency = powerLaw(100, 1000, -1.5)().toInt
 
   def latentNodes(name:String, system:ActorSystem) = {
-    system.actorOf(Props(new FallableNode(typicalLatency _, 0)), name = name)
+    system.actorOf(Props(new FallableNode(typicalLatency _, 0, 100)), name = name)
   }
 }

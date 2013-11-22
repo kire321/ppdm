@@ -54,7 +54,7 @@ class SafeFutureSpec extends FlatSpec {
 
   it should "drop timeouts" in {
     val graph = Fixtures.FixedDegreeRandomGraph(10, 0, {(name:String, system:ActorSystem) =>
-      system.actorOf(Props(new FallableNode(() => 0, .5)), name = name)})
+      system.actorOf(Props(new FallableNode(() => 0, .5, 0)), name = name)})
 
     val future = SafeFuture.traverse(graph.nodes)(_ ? GetGroup())
     assert(Await.result(future, 3 seconds).asInstanceOf[Vector[_]].size > 0)

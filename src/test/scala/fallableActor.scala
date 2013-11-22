@@ -11,12 +11,14 @@ import ppdm.Constants._
 case class DoNotDelay(msg:Any)
 case class SetImmune()
 
-case class FallableNode(latencyDistribution:(() => Int), deathProb:Double) extends Node {
-  var immune:Boolean = false
+case class FallableNode(latencyDistribution:(() => Int), deathProb:Double, expectedNMsgs:Int) extends Node {
+  var doomed = random.nextFloat() < deathProb
+  val timeOfDeath = random.nextInt(expectedNMsgs)
+  var nMsgs = 0
   override def receive = {
 
     case SetImmune() =>
-      immune = true
+      doomed = false
       println("Immunity set")
       sender ! Finished()
 
@@ -29,7 +31,8 @@ case class FallableNode(latencyDistribution:(() => Int), deathProb:Double) exten
       super.receive(anything)
 
     case anything:VulnerableMsg =>
-      if (random.nextFloat() < deathProb && !immune) {
+      nMsgs += 1
+      if (doomed && nMsgs > timeOfDeath) {
         println("Dying")
         context.stop(self)
       } else {
