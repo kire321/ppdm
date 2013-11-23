@@ -7,7 +7,7 @@ def uninstall():
     run('rm -rf ppdm')
 
 def daemonize(cmd):
-    run('nohup %s >stdout.log 2>stderr.log &' % cmd)
+    run('nohup %s &' % cmd)
     run('echo $! > daemon.pid')
 
 def stopDaemon():
@@ -21,6 +21,6 @@ def runClient():
 
 def testClientDaemon():
     with cd('ppdm'):
-        startDaemon()
+        #startDaemon()
         runClient()
-        stopDaemon()
+        #stopDaemon()
