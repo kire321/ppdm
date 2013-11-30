@@ -68,4 +68,5 @@ class SafeFutureSpec extends FlatSpec {
     }
     group.system.shutdown()
   }
+
 }

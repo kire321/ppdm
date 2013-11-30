@@ -22,6 +22,7 @@ object SafeFuture {
               builder += a
               promise success builder
             case Failure(e:TimeoutException) =>
+              println(s"Timeout dropped: ${e.getMessage}")
               promise success builder
             case Failure(e) =>
               promise failure e
@@ -45,6 +46,7 @@ object SafeFuture {
               builder += a
               promise success builder
             case Failure(e:TimeoutException) =>
+              println(s"Timeout dropped: ${e.getMessage}")
               promise success builder
             case Failure(e) =>
               promise failure e

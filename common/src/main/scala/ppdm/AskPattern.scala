@@ -35,16 +35,20 @@ object PatientAsk {
     apply(server, msg, context.system)
   }
 
-  def apply(server:ActorRef, msg:Any, system:ActorSystem)(implicit timeout:Timeout): Future[Any] = {
+  def apply(server:ActorRef, msg:Any, parent:Option[ActorRef])(implicit timeout:Timeout, context:ActorContext): Future[Any] = {
+    apply(server, msg, context.system, parent)
+  }
+
+  def apply(server:ActorRef, msg:Any, system:ActorSystem, parent:Option[ActorRef] = None)(implicit timeout:Timeout): Future[Any] = {
     val promise = Promise[Any]()
     val ex = new TimeoutException(s"Timed out sending message $msg to recipient ${server.path} using timeout of ${timeout.duration}")
-    val client = system.actorOf(Props(PatientAskActor(timeout, promise, ex)), name = "PatientAsk" + random.nextInt().toString)
+    val client = system.actorOf(Props(PatientAskActor(timeout, promise, ex, parent)), name = "PatientAsk" + random.nextInt().toString)
     server.tell(msg, client)
     promise.future
   }
 }
 
-case class PatientAskActor(timeout:Timeout, promise:Promise[Any], ex:TimeoutException) extends Actor {
+case class PatientAskActor(timeout:Timeout, promise:Promise[Any], ex:TimeoutException, parent:Option[ActorRef]) extends Actor {
 
   def scheduleExpiration = context.system.scheduler.scheduleOnce(2 * timeout.duration) {
     promise failure ex
@@ -57,6 +61,11 @@ case class PatientAskActor(timeout:Timeout, promise:Promise[Any], ex:TimeoutExce
     case HeartBeat() =>
       expiration.cancel()
       expiration = scheduleExpiration
+      parent match {
+        case Some(pRef) =>
+          pRef ! HeartBeat()
+        case None => ()
+      }
     case msg =>
       promise success msg
       expiration.cancel()

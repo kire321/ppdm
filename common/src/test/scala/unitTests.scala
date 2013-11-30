@@ -51,7 +51,7 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  //it should "form groups" in Tests.grouping()
+  it should "form groups" in Tests.grouping(hook = Hooks.debug _)
 
   //it should "sum securely" in Tests.secureSumming()
 
@@ -61,6 +61,6 @@ class PPDMSpec extends FlatSpec {
 
   //"Latent nodes" should "sum securely" in Tests.secureSumming(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
 
-  "Dying nodes" should "form groups" in Tests.grouping(size = 20, factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
+  //"Dying nodes" should "form groups" in Tests.grouping(size = 20, factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
 
 }

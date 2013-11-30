@@ -4,7 +4,7 @@ import akka.actor._
 import akka.util.Timeout
 
 import scala.concurrent.duration._
-import scala.concurrent.Future
+import scala.concurrent.{Future, Promise}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util._
 import collection._
@@ -38,6 +38,7 @@ case class StartYourOwnGroup(stableRef:ActorRef) extends VulnerableMsg
 case class JoinMe(group:mutable.HashSet[ActorRef], stableRef:ActorRef) extends VulnerableMsg
 case class GetGroup() extends VulnerableMsg
 case class Gossip(group:mutable.HashSet[ActorRef]) extends VulnerableMsg
+case class GroupingStarting() extends VulnerableMsg
 case class GroupingFinishedMsg() extends VulnerableMsg
 case class Start() extends SafeMsg
 case class Invite() extends VulnerableMsg
@@ -66,15 +67,18 @@ class Node extends Actor {
   var debug = false
   var neighbors = mutable.HashSet[ActorRef]()
   var parent:Option[ActorRef] = None
-  var unfinishedChildren = 0
+  var asker:Option[ActorRef] = None
+  val askerPromise = Promise[Any]()
+  var unfinishedChildren = mutable.MutableList(askerPromise.future)
+  var sizeOfUnfinishedChildrenWhenGroupingFinishedWasLastScheduled = unfinishedChildren.size
   var finishedHere = false
   var outsiders = mutable.HashSet[ActorRef]()
   var children = mutable.HashSet[ActorRef]()
 
   def reassureParent = {
-    parent match {
-      case Some(pRef) =>
-        pRef ! HeartBeat()
+    asker match {
+      case Some(aRef) =>
+        aRef ! HeartBeat()
       case None => ()
     }
   }
@@ -86,40 +90,36 @@ class Node extends Actor {
       jobs map {x => "\t" + x._1.toString + "   " + x._2.toString + "\n"} reduce {_ + _}
   }
 
-  def maybeJoinSmallestGroup = {
-
-  }
-
   def groupingFinishedMethod = {
-    if (unfinishedChildren == 0)
-      parent match {
-        case Some(pRef) =>
-          if (neighbors.size == 0)
-            println("I'm lonely in groupingFinishedMethod")
-          reassureParent
-          if (group.size + 1 < groupSize * gsTolerance) {
-            val groupsFixed = for {
-              neighborGroups <- SafeFuture.traverse(neighbors)(_ ? GetGroup()).mapTo[mutable.Set[mutable.Set[ActorRef]]]
-              otherGroup = neighborGroups reduce {(left, right)  =>
-                if (abs(left.size - groupSize) < abs(right.size - groupSize))
-                  left
-                else
-                  right
-              }
-              merged = group ++= otherGroup
-              reassuredConcernedParent = reassureParent
-              gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self))
-            } yield pRef ! GroupingFinishedMsg()
-            groupsFixed onFailure {case e:Throwable => throw e}
-          } else {
-            if (debug)
-              println("Reporting done")
-            pRef ! GroupingFinishedMsg()
-          }
-        case None => println("GroupingFinished: parent is None")
-      }
-    else
-      finishedHere = true
+    if (debug)
+      println("grouping finished method")
+    asker match {
+      case Some(aRef) =>
+        if (neighbors.size == 0)
+          println("I'm lonely in groupingFinishedMethod")
+        reassureParent
+        if (group.size + 1 < groupSize * gsTolerance) {
+          val groupsFixed = for {
+            neighborGroups <- SafeFuture.traverse(neighbors)(_ ? GetGroup()).mapTo[mutable.Set[mutable.Set[ActorRef]]]
+            otherGroup = neighborGroups reduce {(left, right)  =>
+              if (abs(left.size - groupSize) < abs(right.size - groupSize))
+                left
+              else
+                right
+            }
+            merged = group ++= otherGroup
+            reassuredConcernedParent = reassureParent
+            gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self))
+          } yield aRef ! GroupingFinishedMsg()
+          groupsFixed onFailure {case e:Throwable => throw e}
+        } else {
+          if (debug)
+            println("Reporting done")
+          aRef ! GroupingFinishedMsg()
+        }
+      case None =>
+        throw new Exception("GroupingFinished: asker is none")
+    }
   }
 
   def inviteLater = context.system.scheduler.scheduleOnce(1 second, self, Invite())
@@ -130,13 +130,24 @@ class Node extends Actor {
     }).toList:_*)
   }
 
+  def scheduleGroupingFinished:Unit = {
+    sizeOfUnfinishedChildrenWhenGroupingFinishedWasLastScheduled = unfinishedChildren.size
+    SafeFuture.sequence(unfinishedChildren) onComplete {
+      case Success(list) =>
+        if (unfinishedChildren.size == sizeOfUnfinishedChildrenWhenGroupingFinishedWasLastScheduled)
+          groupingFinishedMethod
+        else
+          scheduleGroupingFinished
+      case Failure(e) =>
+        throw e
+    }
+  }
+
   def receive: PartialFunction[Any, Unit] = {
 
     case Ping() => sender ! Finished()
 
     case StartYourOwnGroupFinished() => ()
-
-    case HeartBeat() => reassureParent
 
     case TreeSum() =>
       val senderCopy = sender
@@ -182,34 +193,39 @@ class Node extends Actor {
             case Success(JoinMeFinished()) =>
               group add outsider
               outsiders remove outsider
-              unfinishedChildren += 1
+              unfinishedChildren += PatientAsk(outsider, GroupingStarting(), asker)
               children add outsider
               inviteLater
             case _ =>
               outsiders remove outsider
               self ! Invite()
           }
-          case None => groupingFinishedMethod
+          case None => scheduleGroupingFinished
         }
       } else {
         if (debug)
-          println("Rejecting")
-        Future.traverse(outsiders)({outsider =>
+          println(s"Rejecting ${outsiders}")
+        SafeFuture.traverse(outsiders)({outsider =>
           outsider ? StartYourOwnGroup(self) andThen {
+            case _ =>
+              if (debug)
+                println(s"heard back from ${outsider.path.name}")
+          }  andThen {
             case Success(StartYourOwnGroupFinished()) =>
-              unfinishedChildren +=1
+              unfinishedChildren += PatientAsk(outsider, GroupingStarting(), asker)
               children add outsider
               reassureParent
             case _ =>
               reassureParent
           }
-        }) onComplete {case _ => groupingFinishedMethod}
+        }) onComplete {case _ => scheduleGroupingFinished}
       }
 
     case Start() =>
       if (debug)
         println("Start")
       self ! StartYourOwnGroup(sender)
+      self.tell(GroupingStarting(), sender)
 
     case Finished() =>
       if (false)
@@ -220,13 +236,16 @@ class Node extends Actor {
         println("GetGroup")
       sender ! group + self
 
-    case GroupingFinishedMsg() =>
+    case GroupingStarting() =>
       if (debug)
-        println("GroupingIsDone")
-      reassureParent
-      unfinishedChildren -= 1
-      if (finishedHere)
-        groupingFinishedMethod
+        println("GroupingStarting")
+      asker match {
+        case Some(original) =>
+          println(s"claimed as a child redundantly by ${sender.path.name}, original claim by ${original.path.name}")
+        case None =>
+          asker = Some(sender)
+          askerPromise success Finished()
+      }
 
     case StartYourOwnGroup(stableRef) =>
       if (neighbors.size == 0)
