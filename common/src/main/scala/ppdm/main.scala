@@ -49,7 +49,6 @@ case class StartYourOwnGroupFinished() extends VulnerableMsg
 case class StartYourOwnGroupFailed() extends VulnerableMsg
 case class HeartBeat() extends SafeMsg
 case class Ping() extends SafeMsg
-case class HesDead(him:ActorRef) extends VulnerableMsg
 
 object Node {
   def spawn(name:String, system:ActorSystem) = {
@@ -109,10 +108,7 @@ class Node extends Actor {
               }
               merged = group ++= otherGroup
               reassuredConcernedParent = reassureParent
-              alive <- SafeFuture.traverse(group)(node => (node ? Gossip(group + self)) map (_ => node))
-              dead = group -- alive
-              bringOutYourDead = group = alive
-              condolencesSent = (alive zip dead) map {pair => pair._1 ! HesDead(pair._2)}
+              gossipingDone <- SafeFuture.traverse(group)(_ ? Gossip(group + self))
             } yield pRef ! GroupingFinishedMsg()
             groupsFixed onFailure {case e:Throwable => throw e}
           } else {
@@ -135,11 +131,6 @@ class Node extends Actor {
   }
 
   def receive: PartialFunction[Any, Unit] = {
-
-    case HesDead(deadGuy) =>
-      if (debug)
-        println("He's dead")
-      group -= deadGuy
 
     case Ping() => sender ! Finished()
 
@@ -275,22 +266,12 @@ class Node extends Actor {
 
     case Gossip(similarGroup) =>
       if (!(similarGroup subsetOf group + self)) {
-        val maybeAddThese = similarGroup -- (group + self)
-        val senderCopy = sender
-        SafeFuture.traverse(maybeAddThese){node =>
-          (node ? Ping()) map (_ => node) andThen {case _ => reassureParent}
-        } onComplete {
-          case Success(addThese) =>
-            group ++= addThese
-            for (member <- group)
-              member ! Gossip(group + self)
-            senderCopy ! Finished()
-          case Failure(e) =>
-            println(e.getMessage)
-        }
-      } else {
-        sender ! Finished()
+        group ++= similarGroup - self
+        reassureParent
+        for (member <- group)
+          member ! Gossip(group + self)
       }
+      sender ! Finished()
 
     case GetDegree() =>
       if (debug)
