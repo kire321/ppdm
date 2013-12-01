@@ -9,6 +9,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util._
 import collection._
 import math.abs
+import java.util.concurrent.TimeoutException
 
 object Constants {
   implicit val timeout = Timeout(2 seconds)
@@ -52,8 +53,20 @@ case class HeartBeat() extends SafeMsg
 case class Ping() extends SafeMsg
 
 object Node {
+
   def spawn(name:String, system:ActorSystem) = {
     system.actorOf(Props(new Node), name = name)
+  }
+
+  def secureSumWithRetry(group:TraversableOnce[ActorRef], system:ActorSystem):Future[Int] = {
+    val job = Random.nextInt()
+    for {
+      stillAlive <- SafeFuture.traverse(group){node => (node ? Ping()) map (_ => node)}
+      groupSum = Future.fold(stillAlive map {node => PatientAsk(node, SecureSum(job), system).mapTo[Int]})(0)(_ + _)
+      fallback <- groupSum recoverWith {
+        case e:TimeoutException => secureSumWithRetry(group, system)
+      }
+    } yield fallback
   }
 }
 

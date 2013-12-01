@@ -35,7 +35,7 @@ object Tests {
     val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory)
     hook(graph.nodes)
     Await.result(PatientAsk(graph.nodes.head, Start(), graph.system), 10*timeoutMultiple seconds)
-    val redundantGroups = Await.result(Future.traverse(graph.nodes)(_ ? GetGroup()), 5*timeoutMultiple seconds)
+    val redundantGroups = Await.result(SafeFuture.traverse(graph.nodes)(_ ? GetGroup()), 5*timeoutMultiple seconds)
     val groups = redundantGroups.asInstanceOf[Vector[mutable.Set[ActorRef]]].distinct
     //println(groups map {_ size})
     val nodesFromGroups = groups flatMap {elem => elem}
@@ -51,7 +51,7 @@ object Tests {
     graph.system.shutdown()
   }
 
-  def secureSumming(size: Int = 500, degree: Int = 6, factory:Factories.Factory = Node.spawn _, hook:Hooks.Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
+  def treeSum(size: Int = 500, degree: Int = 6, factory:Factories.Factory = Node.spawn _, hook:Hooks.Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
     val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory)
     hook(graph.nodes)
     val finished = for {

@@ -13,16 +13,14 @@ import NewAskPattern.ask
 
 class PPDMSpec extends FlatSpec {
 
-  "A group" should "securely compute totals" in {
+  "A group" should "sum securely" in {
     val group = Fixtures.Group
-    val direct = Future.traverse(group.nodes)(node => node ? GetSecret())
-    val job = random.nextInt()
-    val bothFuture = for {
-      secure <- Future.traverse(group.nodes)({node => PatientAsk(node, SecureSum(job), group.system)}).mapTo[IndexedSeq[Int]]
-      direct <- direct.mapTo[Vector[Int]]
-    } yield direct.reduce(_ + _) :: secure.reduce(_ + _) :: Nil
-    val both = Await.result(bothFuture, 1 second)
-    assert(both.head === both.last)
+    val direct = Future.fold(group.nodes map {node:ActorRef => (node ? GetSecret()).mapTo[Int]})(0)(_ + _)
+    val both = Await.result(for {
+      secure <- Node.secureSumWithRetry(group.nodes, group.system)
+      direct <- direct
+    } yield (secure, direct), 1 second)
+    assert(both._1 == both._2)
     group.system.shutdown()
   }
 
@@ -51,16 +49,18 @@ class PPDMSpec extends FlatSpec {
     graph.system.shutdown()
   }
 
-  it should "form groups" in Tests.grouping(hook = Hooks.debug _)
+  //it should "form groups" in Tests.grouping(hook = Hooks.debug _)
 
-  //it should "sum securely" in Tests.secureSumming()
+  //it should "treeSum" in Tests.treeSum()
 
-  //"Pass-through fallableNodes" should "sum securely" in Tests.secureSumming(size = 100, factory = Factories.passThrough _)
+  //"Pass-through fallableNodes" should "treeSum" in Tests.treeSum(size = 100, factory = Factories.passThrough _)
 
   //"Latent nodes" should "form groups" in Tests.grouping(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
 
-  //"Latent nodes" should "sum securely" in Tests.secureSumming(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
+  //"Latent nodes" should "treeSum" in Tests.treeSum(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
 
-  //"Dying nodes" should "form groups" in Tests.grouping(size = 20, factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
+  //"Dying nodes" should "form groups" in Tests.grouping(factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
+
+  //"Dying nodes" should "treeSum" in Tests.treeSum(factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
 
 }
