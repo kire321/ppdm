@@ -57,4 +57,12 @@ object SafeFuture {
       promise.future
     }) map (builder => builder.result())
   }
+
+  //Copied/pasted from stdlib
+  //https://github.com/scala/scala/blob/master/src/library/scala/concurrent/Future.scala
+  def fold[T, R](futures: TraversableOnce[Future[T]])(zero: R)(op: (R, T) => R)(implicit executor: ExecutionContext): Future[R] = {
+    if (futures.isEmpty) Future.successful(zero)
+    else sequence(futures).map(_.foldLeft(zero)(op))
+  }
+
 }

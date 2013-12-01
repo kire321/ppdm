@@ -24,15 +24,10 @@ object Constants {
 import Constants._
 import NewAskPattern.ask
 
-sealed abstract class VulnerableMsg()
-sealed abstract class SafeMsg() //for testing only; we don't want to consider the failure of these messages
+abstract class VulnerableMsg()
+abstract class SafeMsg() //for testing only; we don't want to consider the failure of these messages
 
 case class Finished() extends VulnerableMsg
-case class SetGroup(group:mutable.HashSet[ActorRef]) extends SafeMsg
-case class GetSecret() extends SafeMsg
-case class SecureSum(job:Int, group:TraversableOnce[ActorRef]) extends VulnerableMsg
-case class Key(key:Int, job:Int) extends VulnerableMsg
-case class Debug() extends SafeMsg
 case class GetDegree() extends SafeMsg
 case class AddNeighbor(neighbor:ActorRef) extends SafeMsg
 case class StartYourOwnGroup(stableRef:ActorRef) extends VulnerableMsg
@@ -58,30 +53,24 @@ object Node {
     system.actorOf(Props(new Node), name = name)
   }
 
+  def secureSumWithRetry(group:TraversableOnce[ActorRef])(implicit context:ActorContext):Future[Int] = {
+    secureSumWithRetry(group, context.system)
+  }
+
   def secureSumWithRetry(group:TraversableOnce[ActorRef], system:ActorSystem):Future[Int] = {
-    println("secureSumWithRetry")
     val job = Random.nextInt()
     for {
       stillAlive <- SafeFuture.traverse(group){node => (node ? Ping()) map (_ => node)}
-      printed = println(stillAlive)
-      groupSum = Future.fold(stillAlive map {node => PatientAsk(node, SecureSum(job, stillAlive), system).mapTo[Int]})(0)(_ + _)
-      printed2 = println(groupSum)
+      groupSum = Future.fold(stillAlive map {node => PatientAsk(node, StartSecureSum(job, stillAlive), system).mapTo[Int]})(0)(_ + _)
       fallback <- groupSum recoverWith {
         case e:TimeoutException => secureSumWithRetry(group, system)
       }
-      printed3 = println(fallback)
     } yield fallback
   }
 }
 
-
-case class TempDataForSumming(var sum:Int, var keysRemaining:Int, var asker:Option[ActorRef])
-
-class Node extends Actor {
-  val secret = random.nextInt(modulus / (groupSize * 2))
+class Node extends Actor with SecureSum {
   var group = mutable.HashSet[ActorRef]()
-  var jobs = new mutable.HashMap[Int, TempDataForSumming]
-  var debug = false
   var neighbors = mutable.HashSet[ActorRef]()
   var parent:Option[ActorRef] = None
   var asker:Option[ActorRef] = None
@@ -160,7 +149,7 @@ class Node extends Actor {
     }
   }
 
-  def receive: PartialFunction[Any, Unit] = {
+  override def receive: PartialFunction[Any, Unit] = {
 
     case Ping() => sender ! Finished()
 
@@ -174,9 +163,7 @@ class Node extends Actor {
         case Some(pRef) => {
           val job = Random.nextInt()
           val immutableGroup = immutable.HashSet(group.toSeq:_*) + self
-          val groupSum = Future.fold(immutableGroup map {node =>
-            PatientAsk(node, SecureSum(job, group)).mapTo[Int] andThen {case _ => senderCopy ! HeartBeat()}
-          })(0)(_ + _)
+          val groupSum = Node.secureSumWithRetry(immutableGroup)
           val childrenSums = children map {node =>
             PatientAsk(node, TreeSum()).mapTo[ActorMap] andThen {case _ => senderCopy ! HeartBeat()}
           }
@@ -320,62 +307,8 @@ class Node extends Actor {
         println("AddNeighbor, degree is " + neighbors.size.toString)
       sender ! Finished()
 
-    case Debug() =>
-      println("Debug enabled")
-      debug = true
-      sender ! Finished()
-
-    case GetSecret() =>
-      if (debug)
-        println("GetSecret " + secret.toString)
-      sender ! secret
-
-    case SetGroup(newGroup) =>
-      if(debug)
-        println("SetGroup")
-      group = newGroup.filter(_ != self)
-      sender ! Finished()
-
-    case SecureSum(job, aliveGroup) =>
-      if (debug)
-        println("SecureSum")
-      //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
-      if (!(jobs contains job))
-        jobs(job) = TempDataForSumming(0, 0, None)
-      jobs(job).sum += secret
-      aliveGroup foreach {peer:ActorRef =>
-        val key = random.nextInt(modulus)
-        peer ! Key(key, job)
-        jobs(job).sum -= key
-      }
-      jobs(job).asker = Some(sender)
-      jobs(job).keysRemaining += aliveGroup.size
-      //maybe all the keys came in before we received the SecureSum message
-      if (jobs(job).keysRemaining == 0) {
-        sender ! jobs(job).sum
-        if (debug)
-          println("SecureSum Finished")
-      }
-
-    case Key(key, job) =>
-      //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
-      if (!(jobs contains job))
-        jobs(job) = TempDataForSumming(0, 0, None)
-      jobs(job).sum += key
-      jobs(job).keysRemaining -= 1
-      jobs(job).asker match { //have we already gotten a SecureSum message?
-        case Some(ref) =>
-          if (jobs(job).keysRemaining == 0) {//have we collected all the keys?
-            ref ! jobs(job).sum
-            if (debug)
-              println("Key Finished")
-          } else {
-            ref ! HeartBeat()
-          }
-        case None => Unit
-      }
-
     case anything =>
-      sender ! Status.Failure(new Exception("Unknown message: " + anything.toString))
+      super.receive(anything)
+
   }
 }
