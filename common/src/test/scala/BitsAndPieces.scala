@@ -12,9 +12,9 @@ import NewAskPattern.ask
 
 object Fixtures {
 
-  def Group = new {
+  def Group(factory:Factories.Factory = Node.spawn _) = new {
     val system = ActorSystem("ppdm")
-    val nodes = for(i <- 0 until groupSize) yield Node.spawn("node" + i.toString, system)
+    val nodes = for(i <- 0 until groupSize) yield factory("node" + i.toString, system)
     Await.result(Future.traverse(nodes)({node => node ? SetGroup(mutable.HashSet(nodes.toSeq: _*))}), 1 second)
   }
 
@@ -30,6 +30,18 @@ object Fixtures {
 }
 
 object Tests {
+
+  def secureSum(factory:Factories.Factory = Node.spawn _) = {
+    val group = Fixtures.Group(factory)
+    val direct = Future.fold(group.nodes map {node:ActorRef => (node ? GetSecret()).mapTo[Int]})(0)(_ + _)
+    val both = Await.result(for {
+      secure <- Node.secureSumWithRetry(group.nodes, group.system)
+      direct <- direct
+    } yield (secure, direct), 10 seconds)
+    assert(both._1 == both._2)
+    group.system.shutdown()
+  }
+
 
   def grouping(size: Int = 500, degree: Int = 6, factory:Factories.Factory = Node.spawn _, hook:Hooks.Hook = {(x:IndexedSeq[ActorRef]) => ()}, timeoutMultiple:Int = 1) = {
     val graph = Fixtures.FixedDegreeRandomGraph(size, degree, factory)
@@ -93,7 +105,11 @@ object Factories {
     system.actorOf(Props(new FallableNode({() => 0}, 0, 100)), name = name)
   }
 
-  def dyingNodes(name:String, system:ActorSystem) = {
+  def dyingNodesForGroup(name:String, system:ActorSystem) = {
+    system.actorOf(Props(new FallableNode(() => 0, .1, 5)), name = name)
+  }
+
+  def dyingNodesForGraph(name:String, system:ActorSystem) = {
     system.actorOf(Props(new FallableNode(() => 0, .1, 100)), name = name)
   }
 

@@ -25,7 +25,7 @@ class SafeFutureSpec extends FlatSpec {
   }
 
   it should "drop timeouts" in {
-    val group = Fixtures.Group
+    val group = Fixtures.Group()
     val futures = (group.nodes.head ? Key(0, 0)) :: Future.successful(0) :: Nil
     val result = Await.result(SafeFuture.sequence(futures), 3 seconds)
     assert(result.asInstanceOf[List[Int]] === List(0))
@@ -33,7 +33,7 @@ class SafeFutureSpec extends FlatSpec {
   }
 
   it should "fail for all exceptions other than timeouts" in {
-    val group = Fixtures.Group
+    val group = Fixtures.Group()
     intercept[Exception] {
       Await.result(SafeFuture.sequence((group.nodes.head ? "novel msg") :: Future.successful(0) :: Nil), 1 second)
     }
@@ -62,7 +62,7 @@ class SafeFutureSpec extends FlatSpec {
   }
 
   it should "fail for all exceptions other than timeouts" in {
-    val group = Fixtures.Group
+    val group = Fixtures.Group()
     intercept[Exception] {
       Await.result(SafeFuture.traverse("novel msg" :: GetSecret() :: Nil)(group.nodes.head ? _), 1 second)
     }

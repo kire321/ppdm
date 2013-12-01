@@ -30,7 +30,7 @@ sealed abstract class SafeMsg() //for testing only; we don't want to consider th
 case class Finished() extends VulnerableMsg
 case class SetGroup(group:mutable.HashSet[ActorRef]) extends SafeMsg
 case class GetSecret() extends SafeMsg
-case class SecureSum(job:Int) extends VulnerableMsg
+case class SecureSum(job:Int, group:TraversableOnce[ActorRef]) extends VulnerableMsg
 case class Key(key:Int, job:Int) extends VulnerableMsg
 case class Debug() extends SafeMsg
 case class GetDegree() extends SafeMsg
@@ -59,19 +59,23 @@ object Node {
   }
 
   def secureSumWithRetry(group:TraversableOnce[ActorRef], system:ActorSystem):Future[Int] = {
+    println("secureSumWithRetry")
     val job = Random.nextInt()
     for {
       stillAlive <- SafeFuture.traverse(group){node => (node ? Ping()) map (_ => node)}
-      groupSum = Future.fold(stillAlive map {node => PatientAsk(node, SecureSum(job), system).mapTo[Int]})(0)(_ + _)
+      printed = println(stillAlive)
+      groupSum = Future.fold(stillAlive map {node => PatientAsk(node, SecureSum(job, stillAlive), system).mapTo[Int]})(0)(_ + _)
+      printed2 = println(groupSum)
       fallback <- groupSum recoverWith {
         case e:TimeoutException => secureSumWithRetry(group, system)
       }
+      printed3 = println(fallback)
     } yield fallback
   }
 }
 
 
-case class TempDataForSumming(var sum:Int, var nKeys:Int, var asker:Option[ActorRef])
+case class TempDataForSumming(var sum:Int, var keysRemaining:Int, var asker:Option[ActorRef])
 
 class Node extends Actor {
   val secret = random.nextInt(modulus / (groupSize * 2))
@@ -171,7 +175,7 @@ class Node extends Actor {
           val job = Random.nextInt()
           val immutableGroup = immutable.HashSet(group.toSeq:_*) + self
           val groupSum = Future.fold(immutableGroup map {node =>
-            PatientAsk(node, SecureSum(job)).mapTo[Int] andThen {case _ => senderCopy ! HeartBeat()}
+            PatientAsk(node, SecureSum(job, group)).mapTo[Int] andThen {case _ => senderCopy ! HeartBeat()}
           })(0)(_ + _)
           val childrenSums = children map {node =>
             PatientAsk(node, TreeSum()).mapTo[ActorMap] andThen {case _ => senderCopy ! HeartBeat()}
@@ -332,23 +336,22 @@ class Node extends Actor {
       group = newGroup.filter(_ != self)
       sender ! Finished()
 
-    case SecureSum(job) =>
+    case SecureSum(job, aliveGroup) =>
       if (debug)
         println("SecureSum")
       //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
       if (!(jobs contains job))
         jobs(job) = TempDataForSumming(0, 0, None)
-      if(false)
-        println("SecureSumBefore\n" + jobsString)
       jobs(job).sum += secret
-      group foreach {peer:ActorRef =>
+      aliveGroup foreach {peer:ActorRef =>
         val key = random.nextInt(modulus)
         peer ! Key(key, job)
         jobs(job).sum -= key
       }
       jobs(job).asker = Some(sender)
+      jobs(job).keysRemaining += aliveGroup.size
       //maybe all the keys came in before we received the SecureSum message
-      if (jobs(job).nKeys == group.size) {
+      if (jobs(job).keysRemaining == 0) {
         sender ! jobs(job).sum
         if (debug)
           println("SecureSum Finished")
@@ -358,13 +361,11 @@ class Node extends Actor {
       //collection.mutable.HashMap withDefaultValue doesn't work if the default is not primitive
       if (!(jobs contains job))
         jobs(job) = TempDataForSumming(0, 0, None)
-      if (false)
-        println("KeyBefore\n" + jobsString)
       jobs(job).sum += key
-      jobs(job).nKeys += 1
+      jobs(job).keysRemaining -= 1
       jobs(job).asker match { //have we already gotten a SecureSum message?
         case Some(ref) =>
-          if (jobs(job).nKeys == group.size) {//have we collected all the keys?
+          if (jobs(job).keysRemaining == 0) {//have we collected all the keys?
             ref ! jobs(job).sum
             if (debug)
               println("Key Finished")
@@ -373,8 +374,6 @@ class Node extends Actor {
           }
         case None => Unit
       }
-      if (false)
-        println("Key After\n" + jobsString)
 
     case anything =>
       sender ! Status.Failure(new Exception("Unknown message: " + anything.toString))

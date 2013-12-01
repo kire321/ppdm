@@ -13,21 +13,12 @@ import NewAskPattern.ask
 
 class PPDMSpec extends FlatSpec {
 
-  "A group" should "sum securely" in {
-    val group = Fixtures.Group
-    val direct = Future.fold(group.nodes map {node:ActorRef => (node ? GetSecret()).mapTo[Int]})(0)(_ + _)
-    val both = Await.result(for {
-      secure <- Node.secureSumWithRetry(group.nodes, group.system)
-      direct <- direct
-    } yield (secure, direct), 1 second)
-    assert(both._1 == both._2)
-    group.system.shutdown()
-  }
+  "A group" should "sum securely" in Tests.secureSum()
 
   it should "sum in parallel" in {
-    val group = Fixtures.Group
+    val group = Fixtures.Group()
     val futures = (0 until 2) map {_ =>
-      val msg = SecureSum(random.nextInt())
+      val msg = SecureSum(random.nextInt(), group.nodes)
       val partialSums = group.nodes map {node => PatientAsk(node, msg, group.system).mapTo[Int]}
       Future.reduce(partialSums)(_ + _)
     }
@@ -59,8 +50,12 @@ class PPDMSpec extends FlatSpec {
 
   //"Latent nodes" should "treeSum" in Tests.treeSum(factory = Factories.latentNodes _, timeoutMultiple = 5, hook = Hooks.prepRoot _)
 
+  "Latent nodes" should "sum securely" in Tests.secureSum(Factories.latentNodes _)
+
   //"Dying nodes" should "form groups" in Tests.grouping(factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
 
   //"Dying nodes" should "treeSum" in Tests.treeSum(factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
+
+  "Dying nodes" should "sum securely" in Tests.secureSum(Factories.dyingNodesForGroup _)
 
 }
