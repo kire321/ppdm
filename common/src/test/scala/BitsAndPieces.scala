@@ -67,13 +67,15 @@ object Tests {
     val finished = for {
       grouping <- PatientAsk(graph.nodes.head, Start(), graph.system)
       secureMap <- PatientAsk(graph.nodes.head, TreeSum(), graph.system).mapTo[ActorMap]
-      printed = println(secureMap)
+      printedReportedBack = println(shortGroup(secureMap.keys.reduce(_ ++ _)))
       //Secure summing sometimes fails for unknown reasons, so this voting hack results in the correct total being selected
       secureGroupSums = secureMap.values map {sums =>
         sums.groupBy(x => x).maxBy((pair:(Int, List[Int])) => pair._2.length)._1
       }
       secureSum = secureGroupSums.fold(0)(_ + _)
-      insecureSum <- Future.reduce(graph.nodes map {node => (node ? GetSecret()).mapTo[Int]})(_ + _)
+      stillAlive <- SafeFuture.traverse(graph.nodes){node => (node ? Ping()) map (_ => node)}
+      printedStillAlive = println(shortGroup(stillAlive))
+      insecureSum <- SafeFuture.reduce(graph.nodes map {node => (node ? GetSecret()).mapTo[Int]})(_ + _)
     } yield {
       println(s"$secureSum, $insecureSum")
       assert(secureSum == insecureSum, "Secure and insecure sums should be equal")
@@ -96,6 +98,10 @@ object Hooks {
 
   def debug(nodes:IndexedSeq[ActorRef]):Unit = {
     Await.result(nodes.head ? Debug(), 1 second)
+  }
+
+  def immuneRoot(nodes:IndexedSeq[ActorRef]):Unit = {
+    Await.result(nodes.head ? SetImmune(), 1 second)
   }
 }
 

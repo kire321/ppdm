@@ -42,7 +42,7 @@ class PPDMSpec extends FlatSpec {
 
   //it should "form groups" in Tests.grouping(hook = Hooks.debug _)
 
-  it should "treeSum" in Tests.treeSum(hook = Hooks.debug _)
+  //it should "treeSum" in Tests.treeSum()
 
   //"Pass-through fallableNodes" should "treeSum" in Tests.treeSum(size = 100, factory = Factories.passThrough _)
 
@@ -52,10 +52,10 @@ class PPDMSpec extends FlatSpec {
 
   //"Latent nodes" should "sum securely" in Tests.secureSum(Factories.latentNodes _)
 
-  //"Dying nodes" should "form groups" in Tests.grouping(factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
+  //"Dying nodes" should "form groups" in Tests.grouping(factory = Factories.dyingNodesForGraph _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
 
-  //"Dying nodes" should "treeSum" in Tests.treeSum(factory = Factories.dyingNodes _, hook = Hooks.prepRoot _, timeoutMultiple = 2)
+  "Dying nodes" should "treeSum" in Tests.treeSum(factory = Factories.dyingNodesForGraph _, hook = Hooks.immuneRoot _, timeoutMultiple = 2)
 
-  //"Dying nodes" should "sum securely" in Tests.secureSum(Factories.dyingNodesForGroup _)
+  "Dying nodes" should "sum securely" in Tests.secureSum(Factories.dyingNodesForGroup _)
 
 }

@@ -33,7 +33,7 @@ case class FallableNode(latencyDistribution:(() => Int), deathProb:Double, expec
     case anything:VulnerableMsg =>
       nMsgs += 1
       if (doomed && nMsgs > timeOfDeath) {
-        println("Dying")
+        //println("Dying")
         context.stop(self)
       } else {
         //println("Delaying " + anything.toString + " " + self.toString + " " + sender.toString)

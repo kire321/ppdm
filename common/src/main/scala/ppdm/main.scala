@@ -18,7 +18,7 @@ object Constants {
   val gsTolerance = .5
   type ActorSet = immutable.Set[ActorRef]
   type ActorMap = immutable.Map[ActorSet, List[Int]]
-  def shortGroup(group:ActorSet) = (group map (_.path.name)).fold("")(_ + _)
+  def shortGroup(group:TraversableOnce[ActorRef]) = (group map (_.path.name)).fold("")(_ + _)
 }
 import Constants._
 import NewAskPattern.ask
@@ -69,14 +69,13 @@ class Node extends Actor with Grouping {
         println("Tree sum")
       parent match {
         case Some(pRef) => {
-          val job = Random.nextInt()
           val immutableGroup = immutable.HashSet(group.toSeq:_*) + self
           val groupSum = Node.secureSumWithRetry(immutableGroup)
           val childrenSums = children map {node =>
             PatientAsk(node, TreeSum()).mapTo[ActorMap] andThen {case _ => senderCopy ! HeartBeat()}
           }
           val treeSum = for {
-            childrenTable <- Future.fold(childrenSums)(immutable.HashMap[ActorSet, List[Int]]():ActorMap)(merge(_,_))
+            childrenTable <- SafeFuture.fold(childrenSums)(immutable.HashMap[ActorSet, List[Int]]():ActorMap)(merge(_,_))
             groupSum <- groupSum
             groupTable = immutable.HashMap((immutableGroup, List(groupSum))):ActorMap
           } yield senderCopy ! merge(childrenTable, groupTable)
