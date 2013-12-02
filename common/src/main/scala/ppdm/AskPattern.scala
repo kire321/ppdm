@@ -8,6 +8,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 import java.util.concurrent.TimeoutException
 
+case class HeartBeat() extends SafeMsg
+
 object NewAskPattern{
   implicit def ask(ref:ActorRef) = new BetterTimeoutMessageSupportAskableRef(ref)
 }
