@@ -1,5 +1,7 @@
 from fabric.api import *
 from pexpect import spawn
+from copy import deepcopy
+import random
 
 
 def ssh(cmds):
@@ -17,6 +19,7 @@ def ssh(cmds):
 
 
 def stopDaemon():
+    #TODO: doesn't actually work, since writing down the PID fails for some reason
     run('kill `cat ppdm/daemon.pid`')
 
 
@@ -28,6 +31,14 @@ def startDaemon():
 
 def runClient():
     run('java -jar ppdm/client/target/scala-2.10/client-assembly-0.1-SNAPSHOT.jar')
+
+
+def link():
+    hosts = deepcopy(env.hosts)
+    random.shuffle(hosts)
+    mkdir = 'ls ppdm | grep $HOSTNAME || mkdir ppdm/$HOSTNAME'
+    writeFile = 'echo "%s" >ppdm/$HOSTNAME/peers.list' % '\n'.join(hosts)
+    ssh([mkdir, writeFile])
 
 
 def testClientDaemon():
