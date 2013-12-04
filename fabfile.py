@@ -2,14 +2,6 @@ from fabric.api import *
 from pexpect import spawn
 
 
-def install():
-    run('git clone https://github.com/kire321/ppdm')
-
-
-def uninstall():
-    run('rm -rf ppdm')
-
-
 def ssh(cmds):
     prompt("username on remote:", 'user', env.user)
     prompt("password on remote:", 'password', env.password)
@@ -25,7 +17,7 @@ def ssh(cmds):
 
 
 def stopDaemon():
-    run('kill -9 `cat ppdm/daemon.pid`')
+    run('kill `cat ppdm/daemon.pid`')
 
 
 def startDaemon():
