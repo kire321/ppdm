@@ -34,6 +34,7 @@ object Main extends App {
       val promise = Promise[List[ActorRef]]
       system.actorSelection(remoteName).resolveOne(1 second) onComplete {
         case Success(peer) =>
+          println(s"Successful association with $peer")
           promise completeWith (associateWithPeers(peers.tail, numPeers - 1) map (peer :: _))
         case Failure(e) =>
           println(s"Connection to $remoteName failed with ${e.getMessage}")

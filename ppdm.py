@@ -28,11 +28,11 @@ def link(hosts):
 startDaemonCmd = 'java -jar daemon/target/scala-2.10/daemon-assembly-1.0.jar >$HOSTNAME/daemon.log 2>$HOSTNAME/daemon.log &'
 recordPID = 'echo $! > $HOSTNAME/daemon.pid'
 runClient = 'java -jar client/target/scala-2.10/client-assembly-0.1-SNAPSHOT.jar'
-stopDaemon = 'kill `cat $HOSTNAME/daemon.pid`'
+stopDaemonCmd = 'kill `cat $HOSTNAME/daemon.pid`'
 
 
 def testClientDaemon(hosts):
-    return [startDaemonCmd, recordPID, runClient, stopDaemon]
+    return [startDaemonCmd, recordPID, runClient, stopDaemonCmd]
 
 
 def startDaemon(hosts):
