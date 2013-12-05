@@ -52,8 +52,10 @@ object Main extends App {
   val peers = file.getLines().filter(_ != hostname).toList
   file.close()
   for {
-    aRefs <- associateWithPeers(peers, 6)
+    aRefs <- associateWithPeers(peers, 3)
+    debug <- node ? Debug()
     neighborsAdded <- Future.traverse(aRefs)(node ? AddNeighbor(_))
+    neighborsAdded <- Future.traverse(aRefs)(_ ? AddNeighbor(node))
   } yield println(s"Ready to go with ${peers.size} neighbors")
   Thread.currentThread().interrupt()
 }

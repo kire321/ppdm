@@ -62,7 +62,7 @@ trait Gossip extends SecureSum {
     case AddNeighbor(neighbor) =>
       neighbors add neighbor
       if (debug)
-        println("AddNeighbor, degree is " + neighbors.size.toString)
+        println(s"AddNeighbor, newNeighbor is $neighbor")
       sender ! Finished()
 
     case anything =>

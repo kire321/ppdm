@@ -25,18 +25,30 @@ def link(hosts):
     return [mkdir, writeFile]
 
 
+startDaemonCmd = 'java -jar daemon/target/scala-2.10/daemon-assembly-1.0.jar >$HOSTNAME/daemon.log 2>$HOSTNAME/daemon.log &'
+recordPID = 'echo $! > $HOSTNAME/daemon.pid'
+runClient = 'java -jar client/target/scala-2.10/client-assembly-0.1-SNAPSHOT.jar'
+stopDaemon = 'kill `cat $HOSTNAME/daemon.pid`'
+
+
 def testClientDaemon(hosts):
-    startDaemon = 'java -jar daemon/target/scala-2.10/daemon-assembly-1.0.jar >$HOSTNAME/daemon.log 2>$HOSTNAME/daemon.log &'
-    recordPID = 'echo $! > $HOSTNAME/daemon.pid'
-    runClient = 'java -jar client/target/scala-2.10/client-assembly-0.1-SNAPSHOT.jar'
-    stopDaemon = 'kill `cat $HOSTNAME/daemon.pid`'
-    return [startDaemon, recordPID, runClient, stopDaemon]
+    return [startDaemonCmd, recordPID, runClient, stopDaemon]
+
+
+def startDaemon(hosts):
+    return [startDaemonCmd, recordPID]
+
+
+def stopDaemon(hosts):
+    return [stopDaemonCmd]
 
 
 if __name__ == "__main__":
     actions = {}
     actions['link'] = (link, "makes each machine aware of the others' existence")
     actions['test'] = (testClientDaemon, "tests client-daemon communication")
+    actions['startDaemon'] = (startDaemon, "starts the daemon")
+    actions['stopDaemon'] = (stopDaemon, "stops the daemon")
     parser = argparse.ArgumentParser()
     parser.add_argument("username", help="Username on remote machines")
     parser.add_argument("password", help="Password on remote machines")
