@@ -48,7 +48,7 @@ object Main extends App {
   val node = Node.spawn("node", system)
   val hostname = Seq("bash", "-c", "echo $HOSTNAME").!!.replace("\n", "")
   println(s"Hostname: $hostname")
-  val file = io.Source.fromFile(s"ppdm/$hostname/peers.list")
+  val file = io.Source.fromFile(s"$hostname/peers.list")
   val peers = file.getLines().filter(_ != hostname).toList
   file.close()
   for {

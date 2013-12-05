@@ -6,31 +6,30 @@ import sys
 
 
 def ssh(hosts, username, password, cmdGenerator):
-    newPromptRegex = '% '
     for host in hosts:
         proc = spawn('ssh %s@%s' % (username, host), logfile=sys.stdout, searchwindowsize=10)
         proc.expect('password:')
         proc.sendline(password)
-        proc.expect(newPromptRegex)
-        for cmd in cmdGenerator(hosts):
+        proc.expect_exact('% ')
+        for cmd in ['bash', 'cd ppdm'] + cmdGenerator(hosts):
             proc.sendline(cmd)
-            proc.expect(newPromptRegex)
+            proc.expect_exact('$ ')
         proc.close()
 
 
 def link(hosts):
     hostsCopy = deepcopy(hosts)
     random.shuffle(hostsCopy)
-    mkdir = 'ls ppdm | grep $HOSTNAME || mkdir ppdm/$HOSTNAME'
-    writeFile = 'echo "%s" >ppdm/$HOSTNAME/peers.list' % '\\n'.join(hostsCopy)
+    mkdir = 'ls | grep $HOSTNAME || mkdir $HOSTNAME'
+    writeFile = 'echo "%s" >$HOSTNAME/peers.list' % '\\n'.join(hostsCopy)
     return [mkdir, writeFile]
 
 
 def testClientDaemon(hosts):
-    startDaemon = 'nohup java -jar ppdm/daemon/target/scala-2.10/daemon-assembly-1.0.jar &'
-    recordPID = 'echo $! > ppdm/daemon.pid'
-    runClient = 'java -jar ppdm/client/target/scala-2.10/client-assembly-0.1-SNAPSHOT.jar'
-    stopDaemon = 'kill `cat ppdm/daemon.pid`'
+    startDaemon = 'java -jar daemon/target/scala-2.10/daemon-assembly-1.0.jar >$HOSTNAME/daemon.log 2>$HOSTNAME/daemon.log &'
+    recordPID = 'echo $! > $HOSTNAME/daemon.pid'
+    runClient = 'java -jar client/target/scala-2.10/client-assembly-0.1-SNAPSHOT.jar'
+    stopDaemon = 'kill `cat $HOSTNAME/daemon.pid`'
     return [startDaemon, recordPID, runClient, stopDaemon]
 
 
