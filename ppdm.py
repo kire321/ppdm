@@ -21,7 +21,7 @@ def link(hosts):
     hostsCopy = deepcopy(hosts)
     random.shuffle(hostsCopy)
     mkdir = 'ls | grep $HOSTNAME || mkdir $HOSTNAME'
-    writeFile = 'echo "%s" >$HOSTNAME/peers.list' % '\\n'.join(hostsCopy)
+    writeFile = 'echo -e "%s" >$HOSTNAME/peers.list' % '\\n'.join(hostsCopy)
     return [mkdir, writeFile]
 
 

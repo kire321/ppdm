@@ -26,6 +26,10 @@ class mockNode extends Actor {
 
 object Main extends App {
 
+  def host(hostname:String):String = {
+    s"host $hostname".!!.split(" ").last
+  }
+
   def associateWithPeers(peers:List[String], numPeers:Int):Future[List[ActorRef]] = {
     if (numPeers == 0 || peers.isEmpty) {
       return Future.successful(Nil)
@@ -50,7 +54,7 @@ object Main extends App {
   val hostname = Seq("bash", "-c", "echo $HOSTNAME").!!.replace("\n", "")
   println(s"Hostname: $hostname")
   val file = io.Source.fromFile(s"$hostname/peers.list")
-  val peers = file.getLines().filter(_ != hostname).toList
+  val peers = file.getLines().filter(_ != hostname).toList map host
   file.close()
   println(peers)
   for {
@@ -58,6 +62,6 @@ object Main extends App {
     debug <- node ? Debug()
     neighborsAdded <- Future.traverse(aRefs)(node ? AddNeighbor(_))
     neighborsAdded <- Future.traverse(aRefs)(_ ? AddNeighbor(node))
-  } yield println(s"Ready to go with ${peers.size} neighbors")
+  } yield println(s"Ready to go with ${aRefs.size} neighbors")
   Thread.currentThread().interrupt()
 }
