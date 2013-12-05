@@ -22,7 +22,7 @@ def link(hosts):
     hostsCopy = deepcopy(hosts)
     random.shuffle(hostsCopy)
     mkdir = 'ls ppdm | grep $HOSTNAME || mkdir ppdm/$HOSTNAME'
-    writeFile = 'echo "%s" >ppdm/$HOSTNAME/peers.list' % '\n'.join(hostsCopy)
+    writeFile = 'echo "%s" >ppdm/$HOSTNAME/peers.list' % '\\n'.join(hostsCopy)
     return [mkdir, writeFile]
 
 
@@ -47,6 +47,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.action not in actions:
         print "Don't know action %s" % args.action
+        sys.exit(1)
     hosts = args.hosts.split(',')
     cmdGenerator = actions[args.action][0]
     ssh(hosts, args.username, args.password, cmdGenerator)
