@@ -27,7 +27,7 @@ class mockNode extends Actor {
 object Main extends App {
 
   def host(hostname:String):String = {
-    s"host $hostname".!!.split(" ").last
+    s"host $hostname".!!.replace("\n", "").split(" ").last
   }
 
   def associateWithPeers(peers:List[String], numPeers:Int):Future[List[ActorRef]] = {

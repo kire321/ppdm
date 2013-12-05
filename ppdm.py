@@ -54,7 +54,7 @@ if __name__ == "__main__":
     parser.add_argument("password", help="Password on remote machines")
     actionsHelp = '; '.join(['%s, which %s' % (item[0], item[1][1]) for item in actions.items()])
     parser.add_argument("action", help="The action you want to take. Available actions are: %s" % actionsHelp)
-    parser.add_argument("hosts", help="Comma-seperated list of machines to act on")
+    parser.add_argument("hosts", help="Comma-seperated list of machines to act on. These need to be names, not ip addresses")
     args = parser.parse_args()
     if args.action not in actions:
         print "Don't know action %s" % args.action
