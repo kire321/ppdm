@@ -52,6 +52,7 @@ object Main extends App {
   val file = io.Source.fromFile(s"$hostname/peers.list")
   val peers = file.getLines().filter(_ != hostname).toList
   file.close()
+  println(peers)
   for {
     aRefs <- associateWithPeers(peers, 3)
     debug <- node ? Debug()
