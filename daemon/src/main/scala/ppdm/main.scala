@@ -13,17 +13,6 @@ import ppdm.Constants._
 import NewAskPattern.ask
 
 
-class mockNode extends Actor {
-  def receive = {
-
-    case Start() =>
-      sender ! Finished
-
-    case TreeSum() =>
-      sender ! (immutable.HashMap((immutable.HashSet(self), List(0))):ActorMap)
-  }
-}
-
 object Main extends App {
 
   def host(hostname:String):String = {
@@ -48,11 +37,15 @@ object Main extends App {
     }
   }
 
+  require(args.length == 1, s"You must provide exactly one argument (a shell command which should output the secret). Got $args")
   val system = ActorSystem("daemon")
-  //system.actorOf(Props(new mockNode), name = "node")
-  val node = Node.spawn("node", system)
   val hostname = Seq("bash", "-c", "echo $HOSTNAME").!!.replace("\n", "")
   println(s"Hostname: $hostname")
+  val secretStr = args(0).!!.replace("\n", "")
+  println(s"Secret: $secretStr")
+  val node = system.actorOf(Props(new Node {
+    override val secret = secretStr.toInt
+  }), name = hostname)
   val file = io.Source.fromFile(s"$hostname/peers.list")
   val peers = file.getLines().filter(_ != hostname).toList map host
   file.close()
