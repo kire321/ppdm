@@ -88,7 +88,7 @@ def secureSumHook(parser):
         link(args)
         startDaemon(args)
         oneHost = deepcopy(args)
-        oneHost.hosts = oneHost.hosts[0]
+        oneHost.hosts = oneHost.hosts.split(',')[0]
         runClient(oneHost)
         stopDaemon(args)
     parser.set_defaults(func=sequentialTasks)
