@@ -58,7 +58,7 @@ def testClientDaemon(args):
 
 
 @ssh(hook=lambda parser: parser.add_argument('secret', help="This should \
-    be a shell command that does not contain any spaces and outputs an integer. \
+    be the name of an executable in the ppdm directory that does not need any arguments and outputs an integer. \
     It will be called once, and the output used as the daemon's secret."))
 def startDaemon(args):
     return [startDaemonCmd % args.secret, recordPID]

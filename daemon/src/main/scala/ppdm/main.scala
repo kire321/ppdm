@@ -41,11 +41,11 @@ object Main extends App {
   val system = ActorSystem("daemon")
   val hostname = Seq("bash", "-c", "echo $HOSTNAME").!!.replace("\n", "")
   println(s"Hostname: $hostname")
-  val secretStr = args(0).!!.replace("\n", "")
+  val secretStr = s"./${args(0)}".!!.replace("\n", "")
   println(s"Secret: $secretStr")
   val node = system.actorOf(Props(new Node {
     override val secret = secretStr.toInt
-  }), name = hostname)
+  }), name = "node")
   val file = io.Source.fromFile(s"$hostname/peers.list")
   val peers = file.getLines().filter(_ != hostname).toList map host
   file.close()
