@@ -45,12 +45,12 @@ trait Grouping extends Gossip {
         if (group.size + 1 < groupSize * gsTolerance) {
           val groupsFixed = for {
             neighborGroups <- SafeFuture.traverse(neighbors)(_ ? GetGroup()).mapTo[mutable.Set[mutable.Set[ActorRef]]]
-            otherGroup = neighborGroups reduce {(left, right)  =>
+            otherGroup = neighborGroups.fold(mutable.Set[ActorRef]())((left, right)  =>
               if (abs(left.size - groupSize) < abs(right.size - groupSize))
                 left
               else
                 right
-            }
+            )
             merged = group ++= otherGroup
             reassuredConcernedParent = reassureParent
             gossipingDone <- SafeFuture.traverse(group)(_ ? GossipMsg(group + self))
