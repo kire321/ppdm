@@ -6,6 +6,7 @@ import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Await}
 import ExecutionContext.Implicits.global
 import scala.collection.JavaConversions.enumerationAsScalaIterator
+import sys.process._
 
 import ppdm.Constants._
 import NewAskPattern.ask
@@ -49,6 +50,7 @@ object Main extends App {
     }
     secureSum = secureGroupSums.fold(0)(_ + _)
   } yield secureSum, 60 seconds)
-  println(s"Total is $sum")
   system.shutdown()
+  println(s"Total is $sum")
+  s"echo $sum" #> new java.io.File("sum") !
 }

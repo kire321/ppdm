@@ -13,7 +13,7 @@ import java.util.concurrent.TimeoutException
 object Constants {
   implicit val timeout = Timeout(2 seconds)
   val random = new Random()
-  val modulus = 100
+  val modulus = Int.MaxValue
   val groupSize = 10
   val gsTolerance = .5
   type ActorSet = immutable.Set[ActorRef]
